@@ -4,6 +4,11 @@ from task import Task
 import os
 import pandas as pd
 import openpyxl as pyxl
+from collections import defaultdict
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+
+
 
 def build_plan_from_outline(df,plan):
     df = df.sort_values(by='Outline number')  # Ensure hierarchy order
@@ -18,10 +23,10 @@ def build_plan_from_outline(df,plan):
         country = row.get('Country')
         project = row.get('Project_')
         bucket = row.get('Bucket')
-        label = row.get('Label')
+        label = row.get('Labels')
         start_date = pd.to_datetime(row['Start']) if pd.notnull(row['Start']) else None
         due_date = pd.to_datetime(row['Finish']) if pd.notnull(row['Finish']) else None
-        effort = row.get('Effort')
+        effort = str(row.get('Effort')).split(' ')[0]
         complete = row.get('Completed')
 
         task = Task(
@@ -55,6 +60,54 @@ def build_plan_from_outline(df,plan):
 
     return plan
 
+def get_effort_by_label(tasks,from_date,to_date):
+    from collections import defaultdict
+    effort_by_label = defaultdict(float)
+
+    for task in tasks:
+        if task.is_summary:
+            subtasks_effort = get_effort_by_label(task.subtasks,from_date,to_date)
+            for label, value in subtasks_effort.items():
+                effort_by_label[label] += value
+        else:
+            if task.effort and task.due_date and from_date <= task.due_date < to_date:
+                label = task.label or 'No Label'
+                if pd.isna(label):
+                    label = 'No Label'
+                effort_by_label[label] += float(task.effort)
+    return effort_by_label
+
+def plot_effort_graphs(plan):
+    tasks = plan.get_all_tasks()
+    fig, axes = plt.subplots(1,3,figsize=(18,5),sharey = True)
+
+    today = datetime.today()
+    start_of_week = today - timedelta(days=today.weekday())
+    start_next_week = start_of_week + timedelta(days=7)
+    start_in_3 = start_of_week + timedelta(days=14)
+
+    ranges = {
+        'This week': (start_of_week,start_next_week),
+        'Next week': (start_next_week,start_in_3),
+        'In 3+ week': (start_in_3,start_in_3 + timedelta(days=7)),
+    }
+
+    for i, (title, (start, end)) in enumerate(ranges.items()):
+        effort_data = get_effort_by_label(tasks,start,end)
+        print(effort_data)
+
+        labels = list(effort_data.keys())
+        values = list(effort_data.values())
+
+        axes[i].bar(labels,values,color='skyblue')
+        axes[i].set_title(title)
+        axes[i].set_ylabel('Effort (hours)')
+        axes[i].tick_params(axis='x',rotation=45)
+    
+    plt.tight_layout()
+    plt.show()
+
+
 
 def main():
     bckupFile = 'test.json'
@@ -71,6 +124,8 @@ def main():
     df = pd.read_excel(exportPlanFile,skiprows=8)
     
     build_plan_from_outline(df,engPlan)
+
+    plot_effort_graphs(engPlan)
     
     print(engPlan)
 
