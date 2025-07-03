@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from typing import Any
 
@@ -12,7 +12,7 @@ class Task:
         self.bucket = bucket
         self.label = label
         self.start_date = start_date
-        self.effort = effort
+        self.effort = float(effort) if effort is not None else None # total effort
         self.due_date = due_date
         self.priority = priority
         self.is_summary = is_summary
@@ -29,6 +29,26 @@ class Task:
             'old': old,
             'new': new,
         })
+    
+    @property
+    def duration(self):
+        """Number of working days between start_date and due_date."""
+        if self.start_date and self.due_date:
+            day_count = (self.due_date - self.start_date).days + 1
+            workdays = 0
+            for i in range(day_count):
+                day = self.start_date + timedelta(days=i)
+                if day.weekday() < 5:  # Mon–Fri are 0–4
+                    workdays += 1
+            return workdays
+        return None
+
+    @property  
+    def daily_effort(self):
+        """Effort per working day (if start and due dates are known)."""
+        if self.effort is not None and self.duration:
+            return self.effort / self.duration
+        return None
 
     def add_subtask(self,task):
         if not self.is_summary:
@@ -82,8 +102,9 @@ class Task:
             'bucket': self.bucket,
             'label': self.label,
             'start_date': self.start_date.isoformat() if self.start_date else None,
-            'effort': self.effort,
             'due_date': self.due_date.isoformat() if self.due_date else None,
+            'effort': self.effort,
+            'daily_effort': self.daily_effort,
             'priority': self.priority,
             'is_summary': self.is_summary,
             'completed': self.completed,
@@ -110,8 +131,9 @@ class Task:
             bucket=data.get('bucket'),
             label=data.get('label'),
             start_date=datetime.fromisoformat(data['start_date']) if data.get('start_date') else None,
-            effort=data.get('effort'),
             due_date=datetime.fromisoformat(data['due_date']) if data.get('due_date') else None,
+            effort=data.get('effort'),
+            daily_effort=data.get('daily_effort'),
             priority=data.get('priority', 'Normal'),
             is_summary=data.get('is_summary', False)
         )

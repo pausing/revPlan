@@ -8,8 +8,6 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
-
-
 def build_plan_from_outline(df,plan):
     df = df.sort_values(by='Outline number')  # Ensure hierarchy order
 
@@ -60,21 +58,21 @@ def build_plan_from_outline(df,plan):
 
     return plan
 
-def get_effort_by_label(tasks,from_date,to_date):
+def get_daily_effort_by_label(tasks,from_date,to_date):
     from collections import defaultdict
     effort_by_label = defaultdict(float)
 
     for task in tasks:
         if task.is_summary:
-            subtasks_effort = get_effort_by_label(task.subtasks,from_date,to_date)
+            subtasks_effort = get_daily_effort_by_label(task.subtasks,from_date,to_date)
             for label, value in subtasks_effort.items():
                 effort_by_label[label] += value
         else:
-            if task.effort and task.due_date and from_date <= task.due_date < to_date:
+            if task.daily_effort and task.due_date and from_date <= task.due_date < to_date:
                 label = task.label or 'No Label'
                 if pd.isna(label):
                     label = 'No Label'
-                effort_by_label[label] += float(task.effort)
+                effort_by_label[label] += float(task.daily_effort)
     return effort_by_label
 
 def plot_effort_graphs(plan):
@@ -82,19 +80,33 @@ def plot_effort_graphs(plan):
     fig, axes = plt.subplots(1,3,figsize=(18,5),sharey = True)
 
     today = datetime.today()
+
     start_of_week = today - timedelta(days=today.weekday())
+    str_start_of_week = start_of_week.strftime('%Y-%m-%d')
+
+    end_of_week = start_of_week + timedelta(days=5)
+    str_end_of_week = end_of_week.strftime('%Y-%m-%d')
+
     start_next_week = start_of_week + timedelta(days=7)
+    str_start_next_week = start_next_week.strftime('%Y-%m-%d')
+    
+    end_of_next_week = start_next_week + timedelta(days=5)
+    str_end_next_week = end_of_next_week.strftime('%Y-%m-%d')
+
     start_in_3 = start_of_week + timedelta(days=14)
+    str_start_in_3 = start_in_3.strftime('%Y-%m-%d')
+
+    end_of_in_3_week = start_in_3 + timedelta(days=5)
+    str_end_of_in_3_week = end_of_in_3_week.strftime('%Y-%m-%d')
 
     ranges = {
-        'This week': (start_of_week,start_next_week),
-        'Next week': (start_next_week,start_in_3),
-        'In 3+ week': (start_in_3,start_in_3 + timedelta(days=7)),
+        'This week: {} to {}'.format(str_start_of_week,str_end_of_week): (start_of_week,start_of_week + timedelta(days=5)),
+        'Next week: {} to {}'.format(str_start_next_week,str_end_next_week): (start_next_week,start_next_week + timedelta(days=5)),
+        'In 3+ week: {} to {}'.format(str_start_in_3,str_end_of_in_3_week): (start_in_3,start_in_3 + timedelta(days=5)),
     }
 
     for i, (title, (start, end)) in enumerate(ranges.items()):
-        effort_data = get_effort_by_label(tasks,start,end)
-        print(effort_data)
+        effort_data = get_daily_effort_by_label(tasks,start,end)
 
         labels = list(effort_data.keys())
         values = list(effort_data.values())
@@ -107,15 +119,58 @@ def plot_effort_graphs(plan):
     plt.tight_layout()
     plt.show()
 
+def find_incomplete_tasks(tasks, seen=None):
+    """
+    Returns a list of unique tasks missing any of: project, effort, country, or label.
+    Uses pd.isna() to detect missing values including None, NaN, etc.
+    """
+    if seen is None:
+        seen = set()
+
+    incomplete = []
+
+    for task in tasks:
+        if id(task) in seen or task.is_summary == True:
+            continue
+
+        seen.add(id(task))
+
+        if (
+            pd.isna(task.project)
+            or pd.isna(task.effort)
+            or pd.isna(task.country)
+            or pd.isna(task.label)
+        ):
+            incomplete.append(task)
+
+        if task.subtasks:
+            incomplete += find_incomplete_tasks(task.subtasks, seen)
+
+    return incomplete
+
+
+def report_incomplete_tasks(tasks):
+    i = 0
+    for task in find_incomplete_tasks(tasks):
+        missing = []
+        if pd.isna(task.project):
+            missing.append("project")
+        if pd.isna(task.effort):
+            missing.append("effort")
+        if pd.isna(task.country):
+            missing.append("country")
+        if pd.isna(task.label):
+            missing.append("label")
+        i += 1
+        print(f"{i}.-{task.name} is missing: {', '.join(missing)}")
+
 
 
 def main():
     bckupFile = 'test.json'
-    exportPlanFile = 'Asset Growth Engineering 2025 (2).xlsx'
+    exportPlanFile = '20250702_engPlan.xlsx'
 
     shutil.copy(exportPlanFile,'test.xlsx')
-    exFile = pyxl.open('test.xlsx')
-
 
     engPlan = Plan('engPlan')
     #if os.path.isfile(bckupFile):
@@ -125,19 +180,12 @@ def main():
     
     build_plan_from_outline(df,engPlan)
 
-    plot_effort_graphs(engPlan)
+    #plot_effort_graphs(engPlan)
     
-    print(engPlan)
+    #print(engPlan)
+    report_incomplete_tasks(engPlan.get_all_tasks())
 
     engPlan.save_to_file('testPlan.json')
-    
-
-    
-    
-
-    
-    
-
 
 if __name__ == '__main__':
     main()
