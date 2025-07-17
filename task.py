@@ -4,7 +4,7 @@ from typing import Any
 
 class Task:
     def __init__(self, name, assignedTo = None, country = None, project = None, bucket = None, label = None,
-                start_date = None, effort = None, due_date = None, priority = 'Normal', is_summary = False):
+                start_date = None, effort = None, due_date = None, priority = 'Normal', is_summary = False, completed = False):
         self.name = name
         self.assignedTo = assignedTo
         self.country = country
@@ -16,7 +16,7 @@ class Task:
         self.due_date = due_date
         self.priority = priority
         self.is_summary = is_summary
-        self.completed = False
+        self.completed = completed
         self.subtasks = []
         self._history = []
         self._log_change('Task created')
@@ -85,7 +85,9 @@ class Task:
     
     def __str__(self,indent = 0):
         status = '✓' if self.completed else '✗'
-        label = f"{'  '*indent}{status} {self.name} [{self.priority}]"
+        label = f"{'  '*indent}{status} {self.name} [countr: {self.country}][pro: {self.project}][eff: {self.daily_effort}] "
+        if self.start_date:
+            label += f" (Start: {self.start_date.strftime('%Y-%m-%d')})"
         if self.due_date:
             label += f" (Due: {self.due_date.strftime('%Y-%m-%d')})"
         lines = [label]
