@@ -92,7 +92,11 @@ class Plan:
                         label = task.label or 'No Label'
                         if pd.isna(label):
                             label = 'No Label'
-                        effort_by_label[label] += float(task.daily_effort)*((to_date-from_date).days + 1)
+                        subtotalEffort = float(task.daily_effort)*((to_date-from_date).days + 1)
+                        if pd.isna(subtotalEffort):
+                            subtotalEffort = 0
+                        #print(f'task {task.name} is active, for lable: {label} with daily effort of {task.daily_effort} and total effort {subtotalEffort} ')
+                        effort_by_label[label] += subtotalEffort
             return effort_by_label
 
         def active_during_analysis_period(task,from_date,to_date):
@@ -127,19 +131,19 @@ class Plan:
             start_of_week = today - timedelta(days=today.weekday())
             str_start_of_week = start_of_week.strftime('%Y-%m-%d')
 
-            end_of_week = start_of_week + timedelta(days=5)
+            end_of_week = start_of_week + timedelta(days=4)
             str_end_of_week = end_of_week.strftime('%Y-%m-%d')
 
             start_next_week = start_of_week + timedelta(days=7)
             str_start_next_week = start_next_week.strftime('%Y-%m-%d')
     
-            end_of_next_week = start_next_week + timedelta(days=5)
+            end_of_next_week = start_next_week + timedelta(days=4)
             str_end_next_week = end_of_next_week.strftime('%Y-%m-%d')
 
             start_in_3 = start_of_week + timedelta(days=14)
             str_start_in_3 = start_in_3.strftime('%Y-%m-%d')
 
-            end_of_in_3_week = start_in_3 + timedelta(days=5)
+            end_of_in_3_week = start_in_3 + timedelta(days=4)
             str_end_of_in_3_week = end_of_in_3_week.strftime('%Y-%m-%d')
 
             ranges = {
@@ -158,10 +162,12 @@ class Plan:
             for i, (title, (start, end)) in enumerate(ranges.items()):
                 effort_data = get_daily_effort_by_label(tasks,start,end)
                 numDays = (end-start).days + 1
-                print(numDays)
+                #print(numDays)
 
                 labels = list(effort_data.keys())
+                #print(labels)
                 values = list(effort_data.values())
+                #print(values)
                 max_capacity = [maxEffort(l)*numDays for l in labels]
                 within_capacity = [min(c, m)*numDays for c, m in zip(values,max_capacity)]
                 over_capacity = [max(0, c - m)*numDays for c, m in zip(values,max_capacity)]
@@ -189,7 +195,7 @@ class Plan:
             incomplete = []
 
             for task in tasks:
-                if id(task) in seen or task.is_summary == True:
+                if id(task) in seen or task.is_summary == True or task.completed:
                     continue
 
                 seen.add(id(task))
@@ -267,6 +273,7 @@ class Plan:
         pdf.set_font('DejaVu', '', 12)
         pdf.cell(0, 10, '2. Active Tasks', ln=True)
         pdf.set_font('DejaVu', '', 10)
+
         for i,weeklyTasks in enumerate(activeTasks):
             pdf.ln(5)
             pdf.set_font('DejaVu', '', 10)
@@ -278,7 +285,12 @@ class Plan:
                 pdf.cell(0, 8, f'Label: {label}', ln=True)
                 pdf.set_font('DejaVu', '', 6)
                 for t in tasks:
-                    pdf.multi_cell(0, 6, str(t))
+                    if not t.is_overdue():
+                        pdf.multi_cell(0, 6, str(t))
+                    else:
+                        pdf.set_text_color(255,0,0)
+                        pdf.multi_cell(0, 6, str(t))
+                        pdf.set_text_color(0,0,0)
 
         pdf.ln(5)
 

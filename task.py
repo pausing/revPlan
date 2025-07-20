@@ -85,7 +85,7 @@ class Task:
     
     def __str__(self,indent = 0):
         status = '✓' if self.completed else '✗'
-        label = f"{'  '*indent}{status} {self.name} [countr: {self.country}][pro: {self.project}][eff: {self.daily_effort}] "
+        label = f"{'  '*indent}{status} {self.name} [countr: {self.country}][pro: {self.project}][eff: {self.daily_effort:.2f}] "
         if self.start_date:
             label += f" (Start: {self.start_date.strftime('%Y-%m-%d')})"
         if self.due_date:
