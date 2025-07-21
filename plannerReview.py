@@ -61,7 +61,7 @@ def build_plan_from_outline(df,plan):
 
 def main():
     bckupFile = 'test.json'
-    exportPlanFile = '20250716_engPlan.xlsx'
+    exportPlanFile = '20250720_engPlan.xlsx'
 
     shutil.copy(exportPlanFile,'test.xlsx')
 
@@ -75,7 +75,7 @@ def main():
 
     #plot_effort_graphs(engPlan)
     d = datetime.today()
-    engPlan.createReport(d,f'{d.strftime('%Y-%m-%d')}.pdf')
+    engPlan.createReport(d,f'{d.strftime('%Y-%m-%d')}_engReport.pdf')
     
     #print(engPlan)
     #report_incomplete_tasks(engPlan.get_all_tasks())

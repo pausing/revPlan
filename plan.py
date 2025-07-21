@@ -107,8 +107,12 @@ class Plan:
                 active = False
             else:
                 if not task.completed:
-                    #active = task_start <= to_date and task_finish >= from_date and not task.completed
-                    active = task_start <= to_date
+                    if datetime.today() <= to_date and datetime.today() >= from_date:
+                        #active = task_start <= to_date and task_finish >= from_date and not task.completed
+                        active = task_start <= to_date
+                    else:
+                        active = task_start <= to_date and task_finish >= from_date and not task.completed
+                        #active = task_start <= to_date
             return active
 
         def maxEffort(label):
@@ -255,6 +259,9 @@ class Plan:
         # list of incomplete tasks
         incompleteTasks = find_incomplete_tasks(self.get_all_tasks())
 
+        # list of countries
+        countries = ['Chile','Brasil','Mexico','Colombia']
+
         # create pdf
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True,margin=15)
@@ -280,17 +287,26 @@ class Plan:
             pdf.cell(0, 8,list(ranges.keys())[i], ln=True)
             pdf.ln(5)
 
-            for label,tasks in weeklyTasks.items():
+            for c in countries:
+                pdf.ln(5)
                 pdf.set_font('DejaVu', '', 10)
-                pdf.cell(0, 8, f'Label: {label}', ln=True)
-                pdf.set_font('DejaVu', '', 6)
-                for t in tasks:
-                    if not t.is_overdue():
-                        pdf.multi_cell(0, 6, str(t))
-                    else:
-                        pdf.set_text_color(255,0,0)
-                        pdf.multi_cell(0, 6, str(t))
-                        pdf.set_text_color(0,0,0)
+                pdf.cell(0, 8,c, ln=True)
+                pdf.ln(5)
+
+                for label,tasks in weeklyTasks.items():
+                    tasksFiltered_countr = [t for t in tasks if t.country == c]
+                    if len(tasksFiltered_countr) > 0:
+                        pdf.set_font('DejaVu', '', 10)
+                        pdf.cell(0, 8, f'Label: {label}', ln=True)
+                        pdf.set_font('DejaVu', '', 6)
+                        for t in tasks:
+                            if t.country == c:
+                                if not t.is_overdue():
+                                    pdf.multi_cell(0, 6, str(t))
+                                else:
+                                    pdf.set_text_color(255,0,0)
+                                    pdf.multi_cell(0, 6, str(t))
+                                    pdf.set_text_color(0,0,0)
 
         pdf.ln(5)
 
