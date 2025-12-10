@@ -19,8 +19,8 @@ def build_plan_from_outline(df,plan):
         priority = row.get('Priority', 'Normal')
         assigned = row.get('Assigned To')
         country = row.get('Country')
-        project = row.get('Project_')
-        bucket = row.get('Bucket')
+        #project = row.get('Project_')
+        project = row.get('Bucket')
         label = row.get('Labels')
         start_date = pd.to_datetime(row['Start']) if pd.notnull(row['Start']) else None
         due_date = pd.to_datetime(row['Finish']) if pd.notnull(row['Finish']) else None
@@ -33,7 +33,7 @@ def build_plan_from_outline(df,plan):
             assignedTo=assigned,
             country=country,
             project=project,
-            bucket=bucket,
+            #bucket=bucket,
             label=label,
             start_date=start_date,
             due_date=due_date,
@@ -61,7 +61,7 @@ def build_plan_from_outline(df,plan):
 
 def main():
     bckupFile = 'test.json'
-    exportPlanFile = '20250720_engPlan.xlsx'
+    exportPlanFile = '20251203_AG_Eng_Plan.xlsx'
 
     shutil.copy(exportPlanFile,'test.xlsx')
 
