@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 from collections import defaultdict
 from plan import Plan
@@ -97,7 +96,7 @@ def define3WeekRanges(iniDate):
     return ranges
 
 def plot_effort_graphs(plan, rangesDates):
-    """Create interactive effort graphs using Plotly"""
+    """Create interactive effort graphs using Plotly - returns list of dicts with figure and data"""
     tasks = plan.get_all_tasks()
     
     # Modern color palette
@@ -107,49 +106,28 @@ def plot_effort_graphs(plan, rangesDates):
         'overload': '#E74C3C',  # Modern red
     }
     
-    # Create subplots
-    fig = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=[title for title in rangesDates.keys()],
-        shared_yaxes=True,
-        horizontal_spacing=0.08
-    )
-    
     ranges = rangesDates
+    graph_data = []
     
     for i, (title, (start, end)) in enumerate(ranges.items()):
         effort_data = get_daily_effort_by_label(tasks, start, end)
         numDays = (end - start).days + 1
         
         labels = list(effort_data.keys())
+        print(labels)
         values = list(effort_data.values())
+        print(values)
         max_capacity = [maxEffort(l) * numDays for l in labels]
-        within_capacity = [min(c, m) * numDays for c, m in zip(values, max_capacity)]
-        over_capacity = [max(0, c - m) * numDays for c, m in zip(values, max_capacity)]
+        print(max_capacity)
+        within_capacity = [min(c, m) for c, m in zip(values, max_capacity)]
+        print(within_capacity)
+        over_capacity = [max(0, c - m) for c, m in zip(values, max_capacity)]
+        print(over_capacity)
         
-        col_idx = i + 1
+        # Create independent figure for this time range
+        fig = go.Figure()
         
-        # Calculate actual effort values (within + overload)
-        actual_effort = [wc + oc for wc, oc in zip(within_capacity, over_capacity)]
-        
-        # Max effort background bars (shows capacity limit)
-        fig.add_trace(
-            go.Bar(
-                x=labels,
-                y=max_capacity,
-                name='Max Capacity',
-                marker_color=colors['max_effort'],
-                marker_line_color='#E0E0E0',
-                marker_line_width=1.2,
-                opacity=0.6,
-                showlegend=(i == 0),  # Only show legend for first subplot
-                legendgroup='max',
-                hovertemplate='<b>%{x}</b><br>Max Capacity: %{y:.1f} hours<extra></extra>'
-            ),
-            row=1, col=col_idx
-        )
-        
-        # Current effort bars (within capacity portion)
+        # Current effort bars (within capacity portion) - add first so it's at the bottom
         fig.add_trace(
             go.Bar(
                 x=labels,
@@ -159,15 +137,17 @@ def plot_effort_graphs(plan, rangesDates):
                 marker_line_color='#2E6DA4',
                 marker_line_width=1.2,
                 opacity=0.9,
-                showlegend=(i == 0),
+                showlegend=True,
                 legendgroup='current',
-                hovertemplate='<b>%{x}</b><br>Current Effort: %{y:.1f} hours<extra></extra>'
-            ),
-            row=1, col=col_idx
+                hovertemplate='<b>%{x}</b><br>Within Capacity: %{y:.1f} hours<extra></extra>'
+            )
         )
         
+        # Check if there's overload
+        has_overload = any(oc > 0 for oc in over_capacity)
+        
         # Overload bars (stacked on top of current effort)
-        if any(oc > 0 for oc in over_capacity):
+        if has_overload:
             fig.add_trace(
                 go.Bar(
                     x=labels,
@@ -177,81 +157,89 @@ def plot_effort_graphs(plan, rangesDates):
                     marker_line_color='#C0392B',
                     marker_line_width=1.2,
                     opacity=0.9,
-                    showlegend=(i == 0),
+                    showlegend=True,
                     legendgroup='overload',
                     hovertemplate='<b>%{x}</b><br>Overload: %{y:.1f} hours<extra></extra>'
-                ),
-                row=1, col=col_idx
+                )
             )
-    
-    # Update layout with modern styling
-    # Use overlay mode so max capacity shows as background, effort bars overlay on top
-    fig.update_layout(
-        title={
-            'text': 'Effort by Label',
-            'x': 0.5,
-            'xanchor': 'center',
-            'font': {'size': 18, 'color': '#2C3E50'}
-        },
-        yaxis_title='Effort (hours)',
-        template='plotly_white',
-        height=500,
-        hovermode='x unified',
-        barmode='overlay',  # Overlay bars so max capacity is background
-        margin=dict(l=50, r=50, t=100, b=80),
-        legend=dict(
-            orientation='h',
-            yanchor='bottom',
-            y=1.02,
-            xanchor='right',
-            x=1,
-            font=dict(size=10)
-        ),
-        font=dict(family='Arial, sans-serif', size=11, color='#34495E')
-    )
-    
-    # Manually stack current effort and overload by setting base parameter
-    # Process each subplot's traces
-    trace_idx = 0
-    for i, (title, (start, end)) in enumerate(ranges.items()):
-        effort_data = get_daily_effort_by_label(tasks, start, end)
-        numDays = (end - start).days + 1
-        labels = list(effort_data.keys())
-        values = list(effort_data.values())
-        max_capacity = [maxEffort(l) * numDays for l in labels]
-        within_capacity = [min(c, m) * numDays for c, m in zip(values, max_capacity)]
-        over_capacity = [max(0, c - m) * numDays for c, m in zip(values, max_capacity)]
+        else:
+            # Max effort background bars (shows capacity limit) - only show if no overload
+            # When overload exists, max capacity is implicit in within_capacity + overload
+            fig.add_trace(
+                go.Bar(
+                    x=labels,
+                    y=max_capacity,
+                    name='Max Capacity',
+                    marker_color=colors['max_effort'],
+                    marker_line_color='#E0E0E0',
+                    marker_line_width=1.2,
+                    opacity=0.6,
+                    showlegend=True,
+                    legendgroup='max',
+                    hovertemplate='<b>%{x}</b><br>Max Capacity: %{y:.1f} hours<extra></extra>'
+                )
+            )
         
-        # Max capacity trace (trace_idx) - keep as is (background, already at base=0)
-        # Current effort trace (trace_idx + 1) - starts from 0
-        if trace_idx + 1 < len(fig.data):
-            fig.data[trace_idx + 1].base = [0] * len(labels)
+        # Manually set base values to properly stack current effort and overload
+        # Current effort trace - starts from 0
+        if len(fig.data) > 0:
+            fig.data[0].base = [0] * len(labels)
         
-        # Overload trace (trace_idx + 2) - stacks on current effort (if it exists)
-        has_overload = any(oc > 0 for oc in over_capacity)
-        if has_overload and trace_idx + 2 < len(fig.data):
-            fig.data[trace_idx + 2].base = within_capacity
+        # Second trace: either overload (stacks on current effort) or max capacity (background)
+        if len(fig.data) > 1:
+            if has_overload:
+                # Overload trace - stacks on current effort
+                fig.data[1].base = within_capacity
+            # else: max capacity trace - base stays at 0 (default, it's background)
         
-        # Move to next subplot's traces (3 traces per subplot: max, current, [overload if exists])
-        trace_idx += (3 if has_overload else 2)
-    
-    # Update x-axes
-    for i in range(1, 4):
-        fig.update_xaxes(
-            tickangle=45,
-            row=1, col=i,
-            title_text='Label' if i == 2 else '',
-            title_font=dict(size=11, color='#34495E')
+        # Update layout with modern styling
+        fig.update_layout(
+            title={
+                'text': title,
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 16, 'color': '#2C3E50'}
+            },
+            yaxis_title='Effort (hours)',
+            xaxis_title='Label',
+            template='plotly_white',
+            height=500,
+            hovermode='x unified',
+            barmode='overlay',  # Overlay mode so we can manually control stacking with base
+            margin=dict(l=50, r=50, t=100, b=80),
+            legend=dict(
+                orientation='h',
+                yanchor='bottom',
+                y=1.02,
+                xanchor='right',
+                x=1,
+                font=dict(size=10)
+            ),
+            font=dict(family='Arial, sans-serif', size=11, color='#34495E'),
+            xaxis=dict(
+                tickangle=45,
+                title_font=dict(size=11, color='#34495E')
+            ),
+            yaxis=dict(
+                title_font=dict(size=11, color='#34495E')
+            )
         )
+        
+        # Store data for table display
+        graph_data.append({
+            'title': title,
+            'figure': fig,
+            'data': {
+                'labels': labels,
+                'values': values,
+                'max_capacity': max_capacity,
+                'within_capacity': within_capacity,
+                'over_capacity': over_capacity,
+                'has_overload': has_overload
+            }
+        })
     
-    # Update y-axis (shared)
-    fig.update_yaxes(
-        title_text='Effort (hours)',
-        row=1, col=1,
-        title_font=dict(size=11, color='#34495E')
-    )
-    
-    return fig
+    return graph_data
 
 def find_incomplete_tasks(tasks, seen=None):
     """Returns a list of unique tasks missing any of: project, effort, country, or label."""
@@ -503,9 +491,27 @@ def main():
     # Main content
     st.header("1. Effort by Label")
     
-    # Create and display graphs
-    fig = plot_effort_graphs(plan, ranges)
-    st.plotly_chart(fig, width='stretch')
+    # Create and display graphs (3 independent graphs)
+    graph_data = plot_effort_graphs(plan, ranges)
+    for graph_info in graph_data:
+        # Display the graph
+        st.plotly_chart(graph_info['figure'], width='stretch')
+        
+        # Create expandable widget with table data
+        with st.expander(f"📊 View data table: {graph_info['title']}"):
+            data = graph_info['data']
+            
+            # Create DataFrame for the table
+            df = pd.DataFrame({
+                'Label': data['labels'],
+                'Total Effort (hours)': [f"{v:.1f}" for v in data['values']],
+                'Max Capacity (hours)': [f"{m:.1f}" for m in data['max_capacity']],
+                'Within Capacity (hours)': [f"{w:.1f}" for w in data['within_capacity']],
+                'Overload (hours)': [f"{o:.1f}" for o in data['over_capacity']]
+            })
+            
+            # Display the table
+            st.dataframe(df, width='stretch', hide_index=True)
     
     st.header("2. Active Tasks")
     
