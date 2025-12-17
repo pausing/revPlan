@@ -52,8 +52,9 @@ def active_during_analysis_period(task, from_date, to_date):
                 active = task_start <= to_date and task_finish >= from_date and not task.completed
     return active
 
-def maxEffort(label):
-    max_Eff = {
+def get_default_max_effort():
+    """Returns the default max effort values"""
+    return {
         'BESS': 16,  # 2 people
         'Civil Engineering': 16,  # 2 people
         'Eng Coordinators': 16,  # 3 people
@@ -61,6 +62,15 @@ def maxEffort(label):
         'PV': 28,  # 3 people, 1 half time
         'Yield Assessment ': 16,  # 2 people
     }
+
+def maxEffort(label):
+    """Get max effort for a label, using session state if available, otherwise defaults"""
+    # Initialize session state with defaults if not present
+    if 'max_capacity_values' not in st.session_state:
+        st.session_state.max_capacity_values = get_default_max_effort()
+    
+    # Get from session state, fall back to default if not found
+    max_Eff = st.session_state.max_capacity_values
     try:
         return max_Eff[label]
     except:
@@ -95,8 +105,14 @@ def define3WeekRanges(iniDate):
     
     return ranges
 
-def plot_effort_graphs(plan, rangesDates):
-    """Create interactive effort graphs using Plotly - returns list of dicts with figure and data"""
+def plot_effort_graphs(plan, rangesDates, label_filter=None):
+    """Create interactive effort graphs using Plotly - returns list of dicts with figure and data
+    
+    Args:
+        plan: Plan object
+        rangesDates: Dictionary of date ranges
+        label_filter: Optional list of labels to include (if None, includes all labels)
+    """
     tasks = plan.get_all_tasks()
     
     # Modern color palette
@@ -111,23 +127,26 @@ def plot_effort_graphs(plan, rangesDates):
     
     for i, (title, (start, end)) in enumerate(ranges.items()):
         effort_data = get_daily_effort_by_label(tasks, start, end)
+        
+        # Filter by labels if label_filter is provided
+        if label_filter:
+            effort_data = {label: effort_data[label] for label in effort_data.keys() if label in label_filter}
+        
         numDays = (end - start).days + 1
         
         labels = list(effort_data.keys())
-        print(labels)
         values = list(effort_data.values())
-        print(values)
         max_capacity = [maxEffort(l) * numDays for l in labels]
-        print(max_capacity)
         within_capacity = [min(c, m) for c, m in zip(values, max_capacity)]
-        print(within_capacity)
         over_capacity = [max(0, c - m) for c, m in zip(values, max_capacity)]
-        print(over_capacity)
         
         # Create independent figure for this time range
         fig = go.Figure()
         
-        # Current effort bars (within capacity portion) - add first so it's at the bottom
+        # Check if there's overload
+        has_overload = any(oc > 0 for oc in over_capacity)
+        
+        # Current effort bars (within capacity portion) - always add first
         fig.add_trace(
             go.Bar(
                 x=labels,
@@ -143,10 +162,7 @@ def plot_effort_graphs(plan, rangesDates):
             )
         )
         
-        # Check if there's overload
-        has_overload = any(oc > 0 for oc in over_capacity)
-        
-        # Overload bars (stacked on top of current effort)
+        # Overload bars (stacked on top of current effort) - only if overload exists
         if has_overload:
             fig.add_trace(
                 go.Bar(
@@ -162,35 +178,35 @@ def plot_effort_graphs(plan, rangesDates):
                     hovertemplate='<b>%{x}</b><br>Overload: %{y:.1f} hours<extra></extra>'
                 )
             )
-        else:
-            # Max effort background bars (shows capacity limit) - only show if no overload
-            # When overload exists, max capacity is implicit in within_capacity + overload
-            fig.add_trace(
-                go.Bar(
-                    x=labels,
-                    y=max_capacity,
-                    name='Max Capacity',
-                    marker_color=colors['max_effort'],
-                    marker_line_color='#E0E0E0',
-                    marker_line_width=1.2,
-                    opacity=0.6,
-                    showlegend=True,
-                    legendgroup='max',
-                    hovertemplate='<b>%{x}</b><br>Max Capacity: %{y:.1f} hours<extra></extra>'
+        
+        # Add max capacity as horizontal reference lines
+        shapes = []
+        for i, max_cap in enumerate(max_capacity):
+            shapes.append(
+                dict(
+                    type="line",
+                    xref="x",
+                    yref="y",
+                    x0=i-0.4, x1=i+0.4,
+                    y0=max_cap, y1=max_cap,
+                    line=dict(color=colors['max_effort'], width=2, dash="dash"),
+                    layer="below"
                 )
             )
         
-        # Manually set base values to properly stack current effort and overload
-        # Current effort trace - starts from 0
-        if len(fig.data) > 0:
-            fig.data[0].base = [0] * len(labels)
-        
-        # Second trace: either overload (stacks on current effort) or max capacity (background)
-        if len(fig.data) > 1:
-            if has_overload:
-                # Overload trace - stacks on current effort
-                fig.data[1].base = within_capacity
-            # else: max capacity trace - base stays at 0 (default, it's background)
+        # Add invisible trace for max capacity legend
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode='lines',
+                line=dict(color=colors['max_effort'], width=2, dash="dash"),
+                name='Max Capacity',
+                showlegend=True,
+                legendgroup='max',
+                hovertemplate='Max Capacity<extra></extra>'
+            )
+        )
         
         # Update layout with modern styling
         fig.update_layout(
@@ -205,7 +221,8 @@ def plot_effort_graphs(plan, rangesDates):
             template='plotly_white',
             height=500,
             hovermode='x unified',
-            barmode='overlay',  # Overlay mode so we can manually control stacking with base
+            barmode='stack',  # Stack mode for proper stacking of within_capacity + overload
+            shapes=shapes,  # Add max capacity reference lines
             margin=dict(l=50, r=50, t=100, b=80),
             legend=dict(
                 orientation='h',
@@ -452,12 +469,61 @@ def main():
     start_analysis = datetime.combine(analysis_date, datetime.min.time())
     
     # Get date ranges
-    ranges = define3WeekRanges(start_analysis)
+    all_ranges = define3WeekRanges(start_analysis)
+    
+    # Date range filter - filter by week ranges
+    range_options = list(all_ranges.keys())
+    selected_ranges = st.sidebar.multiselect(
+        "Filter by Week Range",
+        options=range_options,
+        default=range_options,
+        help="Select week ranges to display in graphs and active tasks"
+    )
+    
+    # Filter ranges based on selection
+    if selected_ranges:
+        ranges = {title: all_ranges[title] for title in selected_ranges if title in all_ranges}
+    else:
+        ranges = {}
+        st.sidebar.warning("⚠️ Please select at least one week range.")
     
     # Get active tasks for each week (needed to populate project filter)
-    activeTasks = []
-    for i, (title, (start, end)) in enumerate(ranges.items()):
-        activeTasks.append(get_active_task_by_label(plan.get_all_tasks(), start, end))
+    all_activeTasks = []
+    for i, (title, (start, end)) in enumerate(all_ranges.items()):
+        all_activeTasks.append(get_active_task_by_label(plan.get_all_tasks(), start, end))
+    
+    # Filter activeTasks based on selected ranges and create mapping
+    filtered_activeTasks = []
+    filtered_range_titles = []
+    if selected_ranges:
+        for i, title in enumerate(range_options):
+            if title in selected_ranges:
+                filtered_activeTasks.append(all_activeTasks[i])
+                filtered_range_titles.append(title)
+        activeTasks = filtered_activeTasks
+    else:
+        activeTasks = []
+        filtered_range_titles = []
+    
+    # Extract all unique labels from active tasks and graphs
+    all_labels = set()
+    # Get labels from all active tasks (all ranges, not just filtered)
+    for weeklyTasks in all_activeTasks:
+        all_labels.update(weeklyTasks.keys())
+    
+    # Also get labels from all ranges to ensure we capture all possible labels
+    for (start, end) in all_ranges.values():
+        effort_data = get_daily_effort_by_label(plan.get_all_tasks(), start, end)
+        all_labels.update(effort_data.keys())
+    
+    # Label filter
+    label_options = sorted(list(all_labels)) if all_labels else []
+    selected_labels = st.sidebar.multiselect(
+        "Filter by Label",
+        options=label_options,
+        default=label_options,
+        help="Select labels to display in graphs and active tasks"
+    )
     
     # Country filter for Active Tasks
     all_countries = ['Chile', 'Brasil', 'Mexico', 'Colombia']
@@ -473,7 +539,7 @@ def main():
     countries_to_filter = selected_countries if selected_countries else []
     
     if countries_to_filter:
-        for weeklyTasks in activeTasks:
+        for weeklyTasks in all_activeTasks:
             for label, tasks in weeklyTasks.items():
                 for task in tasks:
                     if task.country in countries_to_filter and not pd.isna(task.project):
@@ -488,110 +554,266 @@ def main():
         help="Select projects to display in Active Tasks section (filtered by selected countries)"
     )
     
-    # Main content
-    st.header("1. Effort by Label")
+    # Initialize session state for max capacity values
+    if 'max_capacity_values' not in st.session_state:
+        st.session_state.max_capacity_values = get_default_max_effort()
     
-    # Create and display graphs (3 independent graphs)
-    graph_data = plot_effort_graphs(plan, ranges)
-    for graph_info in graph_data:
-        # Display the graph
-        st.plotly_chart(graph_info['figure'], width='stretch')
+    # Main content with tabs
+    tab1, tab2 = st.tabs(["📊 Reports", "⚙️ Max Capacity Settings"])
+    
+    with tab1:
+        st.header("1. Effort by Label")
         
-        # Create expandable widget with table data
-        with st.expander(f"📊 View data table: {graph_info['title']}"):
-            data = graph_info['data']
-            
-            # Create DataFrame for the table
-            df = pd.DataFrame({
-                'Label': data['labels'],
-                'Total Effort (hours)': [f"{v:.1f}" for v in data['values']],
-                'Max Capacity (hours)': [f"{m:.1f}" for m in data['max_capacity']],
-                'Within Capacity (hours)': [f"{w:.1f}" for w in data['within_capacity']],
-                'Overload (hours)': [f"{o:.1f}" for o in data['over_capacity']]
-            })
-            
-            # Display the table
-            st.dataframe(df, width='stretch', hide_index=True)
-    
-    st.header("2. Active Tasks")
-    
-    # Show filter info
-    filter_info = []
-    if len(selected_countries) < len(all_countries):
-        filter_info.append(f"Countries: {', '.join(selected_countries) if selected_countries else 'None'}")
-    if len(selected_projects) < len(project_options):
-        filter_info.append(f"Projects: {', '.join(selected_projects) if selected_projects else 'None'}")
-    
-    if filter_info:
-        st.info(f"📌 Filters: {' | '.join(filter_info)}")
-    
-    # Use selected countries and projects for filtering
-    countries_to_display = selected_countries if selected_countries else []
-    projects_to_display = selected_projects if selected_projects else []
-    
-    # Display active tasks organized by week -> country -> label
-    for i, weeklyTasks in enumerate(activeTasks):
-        week_title = list(ranges.keys())[i]
-        st.subheader(week_title)
-        
-        # If no countries selected, show message
-        if not countries_to_display:
-            st.warning("⚠️ Please select at least one country from the sidebar filter.")
-            continue
-        
-        # If no projects selected, show message
-        if not projects_to_display:
-            st.warning("⚠️ Please select at least one project from the sidebar filter.")
-            continue
-        
-        for c in countries_to_display:
-            country_has_tasks = False
-            for label, tasks in weeklyTasks.items():
-                # Filter by both country and project
-                tasksFiltered = [t for t in tasks 
-                               if t.country == c 
-                               and (not pd.isna(t.project) and t.project in projects_to_display)]
-                if len(tasksFiltered) > 0:
-                    country_has_tasks = True
-                    break
-            
-            if country_has_tasks:
-                st.markdown(f"**{c}**")
+        # Check if ranges are selected
+        if not ranges:
+            st.warning("⚠️ Please select at least one week range from the sidebar filter to view graphs.")
+        else:
+            # Create and display graphs (filtered by selected ranges and labels)
+            graph_data = plot_effort_graphs(plan, ranges, label_filter=selected_labels if selected_labels else None)
+            for graph_info in graph_data:
+                # Display the graph
+                st.plotly_chart(graph_info['figure'], width='stretch')
                 
-                for label, tasks in weeklyTasks.items():
-                    # Filter by both country and project
-                    tasksFiltered = [t for t in tasks 
-                                   if t.country == c 
-                                   and (not pd.isna(t.project) and t.project in projects_to_display)]
-                    if len(tasksFiltered) > 0:
-                        st.markdown(f"*Label: {label}*")
-                        for t in tasksFiltered:
-                            if t.is_overdue():
-                                st.markdown(f":red[🔴 {str(t)}]")
-                            else:
-                                st.markdown(f"⚪ {str(t)}")
-    
-    st.header("3. Tasks with Missing Information")
-    
-    incompleteTasks = find_incomplete_tasks(plan.get_all_tasks())
-    
-    if len(incompleteTasks) == 0:
-        st.success("✅ All tasks have complete information!")
-    else:
-        st.warning(f"⚠️ Found {len(incompleteTasks)} tasks with missing information:")
+                # Create expandable widget with table data
+                with st.expander(f"📊 View data table: {graph_info['title']}"):
+                    data = graph_info['data']
+                    
+                    # Create DataFrame for the table
+                    df = pd.DataFrame({
+                        'Label': data['labels'],
+                        'Total Effort (hours)': [f"{v:.1f}" for v in data['values']],
+                        'Max Capacity (hours)': [f"{m:.1f}" for m in data['max_capacity']],
+                        'Within Capacity (hours)': [f"{w:.1f}" for w in data['within_capacity']],
+                        'Overload (hours)': [f"{o:.1f}" for o in data['over_capacity']]
+                    })
+                    
+                    # Display the table
+                    st.dataframe(df, width='stretch', hide_index=True)
         
-        for t in incompleteTasks:
-            missing = []
-            if pd.isna(t.project):
-                missing.append("project")
-            if pd.isna(t.effort):
-                missing.append("effort")
-            if pd.isna(t.country):
-                missing.append("country")
-            if pd.isna(t.label):
-                missing.append("label")
-            fields = ", ".join(missing)
-            st.markdown(f"- **{t.name}**: Missing [{fields}]")
+        st.header("2. Active Tasks")
+        
+        # Show filter info
+        filter_info = []
+        if len(selected_ranges) < len(range_options):
+            filter_info.append(f"Week Ranges: {', '.join(selected_ranges) if selected_ranges else 'None'}")
+        if selected_labels and len(selected_labels) < len(label_options):
+            filter_info.append(f"Labels: {', '.join(selected_labels) if selected_labels else 'None'}")
+        if len(selected_countries) < len(all_countries):
+            filter_info.append(f"Countries: {', '.join(selected_countries) if selected_countries else 'None'}")
+        if len(selected_projects) < len(project_options):
+            filter_info.append(f"Projects: {', '.join(selected_projects) if selected_projects else 'None'}")
+        
+        if filter_info:
+            st.info(f"📌 Filters: {' | '.join(filter_info)}")
+        
+        # Check if ranges are selected
+        if not selected_ranges or not activeTasks:
+            st.warning("⚠️ Please select at least one week range from the sidebar filter to view active tasks.")
+        else:
+            # Use selected countries, projects, and labels for filtering
+            countries_to_display = selected_countries if selected_countries else []
+            projects_to_display = selected_projects if selected_projects else []
+            labels_to_display = selected_labels if selected_labels else []
+            
+            # Display active tasks organized by week -> country -> label
+            for i, weeklyTasks in enumerate(activeTasks):
+                if i < len(filtered_range_titles):
+                    week_title = filtered_range_titles[i]
+                    st.subheader(week_title)
+                else:
+                    continue
+                
+                # If no countries selected, show message
+                if not countries_to_display:
+                    st.warning("⚠️ Please select at least one country from the sidebar filter.")
+                    continue
+                
+                # If no projects selected, show message
+                if not projects_to_display:
+                    st.warning("⚠️ Please select at least one project from the sidebar filter.")
+                    continue
+                
+                # If labels are selected but none match, skip
+                if labels_to_display:
+                    # Check if any labels in weeklyTasks match selected labels
+                    has_matching_labels = any(label in labels_to_display for label in weeklyTasks.keys())
+                    if not has_matching_labels:
+                        continue
+                
+                for c in countries_to_display:
+                    country_has_tasks = False
+                    for label, tasks in weeklyTasks.items():
+                        # Filter by label if labels are selected
+                        if labels_to_display and label not in labels_to_display:
+                            continue
+                        # Filter by both country and project
+                        tasksFiltered = [t for t in tasks 
+                                       if t.country == c 
+                                       and (not pd.isna(t.project) and t.project in projects_to_display)]
+                        if len(tasksFiltered) > 0:
+                            country_has_tasks = True
+                            break
+                    
+                    if country_has_tasks:
+                        st.markdown(f"**{c}**")
+                        
+                        for label, tasks in weeklyTasks.items():
+                            # Filter by label if labels are selected
+                            if labels_to_display and label not in labels_to_display:
+                                continue
+                            # Filter by both country and project
+                            tasksFiltered = [t for t in tasks 
+                                           if t.country == c 
+                                           and (not pd.isna(t.project) and t.project in projects_to_display)]
+                            if len(tasksFiltered) > 0:
+                                st.markdown(f"*Label: {label}*")
+                                for t in tasksFiltered:
+                                    if t.is_overdue():
+                                        st.markdown(f":red[🔴 {str(t)}]")
+                                    else:
+                                        st.markdown(f"⚪ {str(t)}")
+        
+        st.header("3. Tasks with Missing Information")
+        
+        incompleteTasks = find_incomplete_tasks(plan.get_all_tasks())
+        
+        if len(incompleteTasks) == 0:
+            st.success("✅ All tasks have complete information!")
+        else:
+            st.warning(f"⚠️ Found {len(incompleteTasks)} tasks with missing information:")
+            
+            for t in incompleteTasks:
+                missing = []
+                if pd.isna(t.project):
+                    missing.append("project")
+                if pd.isna(t.effort):
+                    missing.append("effort")
+                if pd.isna(t.country):
+                    missing.append("country")
+                if pd.isna(t.label):
+                    missing.append("label")
+                fields = ", ".join(missing)
+                st.markdown(f"- **{t.name}**: Missing [{fields}]")
+    
+    with tab2:
+        st.header("⚙️ Max Capacity Settings")
+        st.markdown("Configure the maximum daily effort capacity (in hours) for each label. These values are used in the effort graphs to calculate capacity limits and overload.")
+        
+        # Get all labels from the plan
+        all_labels_in_plan = set()
+        if plan:
+            for task in plan.get_all_tasks():
+                if hasattr(task, 'label') and task.label and not pd.isna(task.label):
+                    all_labels_in_plan.add(task.label)
+        
+        # Get current values from session state
+        current_values = st.session_state.max_capacity_values.copy()
+        default_values = get_default_max_effort()
+        
+        # Combine all labels: defaults, current values, and labels from plan
+        all_labels = sorted(list(set(
+            list(default_values.keys()) + 
+            list(current_values.keys()) + 
+            list(all_labels_in_plan)
+        )))
+        
+        # Add new label section
+        with st.expander("➕ Add New Label", expanded=False):
+            col_new1, col_new2 = st.columns([3, 1])
+            with col_new1:
+                new_label = st.text_input("Label Name", placeholder="Enter new label name")
+            with col_new2:
+                new_capacity = st.number_input("Capacity (hours/day)", min_value=0.0, max_value=200.0, value=16.0, step=1.0, key="new_capacity")
+            
+            if st.button("Add Label", key="add_label_btn"):
+                if new_label and new_label.strip():
+                    if new_label not in current_values:
+                        current_values[new_label.strip()] = float(new_capacity)
+                        st.session_state.max_capacity_values = current_values
+                        st.success(f"✅ Added label '{new_label.strip()}' with capacity {new_capacity} hours/day")
+                        st.rerun()
+                    else:
+                        st.warning(f"⚠️ Label '{new_label.strip()}' already exists. Edit it in the form below.")
+                else:
+                    st.error("❌ Please enter a label name.")
+        
+        # Create a form for editing values
+        with st.form("max_capacity_form"):
+            st.subheader("Edit Max Capacity Values")
+            
+            # Create input fields for each label
+            updated_values = {}
+            if all_labels:
+                col1, col2 = st.columns(2)
+                
+                for i, label in enumerate(all_labels):
+                    with col1 if i % 2 == 0 else col2:
+                        current_val = current_values.get(label, default_values.get(label, 0))
+                        updated_values[label] = st.number_input(
+                            label=f"{label}",
+                            min_value=0.0,
+                            max_value=200.0,
+                            value=float(current_val),
+                            step=1.0,
+                            help=f"Maximum daily effort capacity for {label} (hours)",
+                            key=f"capacity_{label}"
+                        )
+            else:
+                st.info("No labels found. Load a plan to see labels, or add new labels above.")
+            
+            # Form buttons (always show)
+            col_btn1, col_btn2, col_btn3 = st.columns(3)
+            with col_btn1:
+                save_button = st.form_submit_button("💾 Save Changes", width='stretch')
+            with col_btn2:
+                reset_button = st.form_submit_button("🔄 Reset to Defaults", width='stretch')
+            with col_btn3:
+                clear_button = st.form_submit_button("🗑️ Clear All", width='stretch')
+        
+        # Handle form submissions
+        if save_button:
+            # Only save non-zero values
+            filtered_values = {k: v for k, v in updated_values.items() if v > 0}
+            st.session_state.max_capacity_values = filtered_values
+            st.success("✅ Max capacity values saved! The graphs will update automatically.")
+            st.rerun()
+        
+        if reset_button:
+            st.session_state.max_capacity_values = get_default_max_effort()
+            st.success("✅ Max capacity values reset to defaults!")
+            st.rerun()
+        
+        if clear_button:
+            st.session_state.max_capacity_values = {}
+            st.success("✅ All max capacity values cleared!")
+            st.rerun()
+        
+        # Display current values in a table
+        st.subheader("Current Values")
+        if st.session_state.max_capacity_values:
+            values_df = pd.DataFrame({
+                'Label': list(st.session_state.max_capacity_values.keys()),
+                'Max Capacity (hours/day)': list(st.session_state.max_capacity_values.values())
+            })
+            values_df = values_df.sort_values('Label')
+            st.dataframe(values_df, width='stretch', hide_index=True)
+        else:
+            st.info("No max capacity values configured. Using defaults.")
+        
+        # Show default values for reference
+        with st.expander("📋 View Default Values"):
+            default_df = pd.DataFrame({
+                'Label': list(default_values.keys()),
+                'Default Max Capacity (hours/day)': list(default_values.values())
+            })
+            default_df = default_df.sort_values('Label')
+            st.dataframe(default_df, width='stretch', hide_index=True)
+        
+        # Show labels found in plan
+        if all_labels_in_plan:
+            with st.expander("📌 Labels Found in Current Plan"):
+                labels_list = sorted(list(all_labels_in_plan))
+                st.write(", ".join(labels_list))
 
 if __name__ == "__main__":
     main()
