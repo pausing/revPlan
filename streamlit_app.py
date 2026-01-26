@@ -7,6 +7,8 @@ from plan import Plan
 from plannerReview import build_plan_from_outline
 import os
 import shutil
+from pdf_export import generate_pdf_report
+from meeting_notes import load_notes, save_note_for_date, get_note_for_date, get_all_notes, delete_note_for_date
 
 # Page configuration
 st.set_page_config(page_title="Engineering Plan Review", layout="wide")
@@ -562,101 +564,136 @@ def main():
     tab1, tab2 = st.tabs(["📊 Reports", "⚙️ Max Capacity Settings"])
     
     with tab1:
-        st.header("1. Effort by Label")
-        
-        # Check if ranges are selected
-        if not ranges:
-            st.warning("⚠️ Please select at least one week range from the sidebar filter to view graphs.")
-        else:
-            # Create and display graphs (filtered by selected ranges and labels)
-            graph_data = plot_effort_graphs(plan, ranges, label_filter=selected_labels if selected_labels else None)
-            for graph_info in graph_data:
-                # Display the graph
-                st.plotly_chart(graph_info['figure'], width='stretch')
-                
-                # Create expandable widget with table data
-                with st.expander(f"📊 View data table: {graph_info['title']}"):
-                    data = graph_info['data']
+        # PDF Export Section
+        st.subheader("📄 PDF Export")
+        col_export1, col_export2 = st.columns([2, 1])
+        with col_export1:
+            export_mode = st.radio(
+                "Export Options:",
+                ["Maintain Current Filters", "Export All Data"],
+                help="Choose whether to export with current filter selections or export all information"
+            )
+        with col_export2:
+            st.write("")  # Spacing
+            if st.button("📥 Generate PDF Report", type="primary", width='stretch'):
+                try:
+                    use_filters = (export_mode == "Maintain Current Filters")
                     
-                    # Create DataFrame for the table
-                    df = pd.DataFrame({
-                        'Label': data['labels'],
-                        'Total Effort (hours)': [f"{v:.1f}" for v in data['values']],
-                        'Max Capacity (hours)': [f"{m:.1f}" for m in data['max_capacity']],
-                        'Within Capacity (hours)': [f"{w:.1f}" for w in data['within_capacity']],
-                        'Overload (hours)': [f"{o:.1f}" for o in data['over_capacity']]
-                    })
+                    # Generate PDF - pass required functions as parameters
+                    pdf_bytes = generate_pdf_report(
+                        plan=plan,
+                        all_ranges=all_ranges,
+                        plot_effort_graphs_func=plot_effort_graphs,
+                        get_active_task_by_label_func=get_active_task_by_label,
+                        max_effort_func=maxEffort,
+                        use_filters=use_filters,
+                        selected_ranges=selected_ranges if use_filters else None,
+                        selected_labels=selected_labels if use_filters else None,
+                        selected_countries=selected_countries if use_filters else None,
+                        selected_projects=selected_projects if use_filters else None,
+                        analysis_date=analysis_date,
+                        max_capacity_values=st.session_state.max_capacity_values if 'max_capacity_values' in st.session_state else None
+                    )
                     
-                    # Display the table
-                    st.dataframe(df, width='stretch', hide_index=True)
+                    # Create download button
+                    st.download_button(
+                        label="⬇️ Download PDF",
+                        data=pdf_bytes,
+                        file_name=f"Engineering_Plan_Report_{analysis_date.strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        width='stretch'
+                    )
+                    st.success("✅ PDF generated successfully! Click the download button to save.")
+                except Exception as e:
+                    st.error(f"❌ Error generating PDF: {str(e)}")
+                    st.exception(e)
         
-        st.header("2. Active Tasks")
+        st.divider()
         
-        # Show filter info
-        filter_info = []
-        if len(selected_ranges) < len(range_options):
-            filter_info.append(f"Week Ranges: {', '.join(selected_ranges) if selected_ranges else 'None'}")
-        if selected_labels and len(selected_labels) < len(label_options):
-            filter_info.append(f"Labels: {', '.join(selected_labels) if selected_labels else 'None'}")
-        if len(selected_countries) < len(all_countries):
-            filter_info.append(f"Countries: {', '.join(selected_countries) if selected_countries else 'None'}")
-        if len(selected_projects) < len(project_options):
-            filter_info.append(f"Projects: {', '.join(selected_projects) if selected_projects else 'None'}")
+        # Create 3-column layout: Graphs/Tasks (left), Notes (right)
+        col_main, col_notes = st.columns([2, 1])
         
-        if filter_info:
-            st.info(f"📌 Filters: {' | '.join(filter_info)}")
-        
-        # Check if ranges are selected
-        if not selected_ranges or not activeTasks:
-            st.warning("⚠️ Please select at least one week range from the sidebar filter to view active tasks.")
-        else:
-            # Use selected countries, projects, and labels for filtering
-            countries_to_display = selected_countries if selected_countries else []
-            projects_to_display = selected_projects if selected_projects else []
-            labels_to_display = selected_labels if selected_labels else []
+        with col_main:
+            st.header("1. Effort by Label")
             
-            # Display active tasks organized by week -> country -> label
-            for i, weeklyTasks in enumerate(activeTasks):
-                if i < len(filtered_range_titles):
-                    week_title = filtered_range_titles[i]
-                    st.subheader(week_title)
-                else:
-                    continue
-                
-                # If no countries selected, show message
-                if not countries_to_display:
-                    st.warning("⚠️ Please select at least one country from the sidebar filter.")
-                    continue
-                
-                # If no projects selected, show message
-                if not projects_to_display:
-                    st.warning("⚠️ Please select at least one project from the sidebar filter.")
-                    continue
-                
-                # If labels are selected but none match, skip
-                if labels_to_display:
-                    # Check if any labels in weeklyTasks match selected labels
-                    has_matching_labels = any(label in labels_to_display for label in weeklyTasks.keys())
-                    if not has_matching_labels:
-                        continue
-                
-                for c in countries_to_display:
-                    country_has_tasks = False
-                    for label, tasks in weeklyTasks.items():
-                        # Filter by label if labels are selected
-                        if labels_to_display and label not in labels_to_display:
-                            continue
-                        # Filter by both country and project
-                        tasksFiltered = [t for t in tasks 
-                                       if t.country == c 
-                                       and (not pd.isna(t.project) and t.project in projects_to_display)]
-                        if len(tasksFiltered) > 0:
-                            country_has_tasks = True
-                            break
+            # Check if ranges are selected
+            if not ranges:
+                st.warning("⚠️ Please select at least one week range from the sidebar filter to view graphs.")
+            else:
+                # Create and display graphs (filtered by selected ranges and labels)
+                graph_data = plot_effort_graphs(plan, ranges, label_filter=selected_labels if selected_labels else None)
+                for graph_info in graph_data:
+                    # Display the graph
+                    st.plotly_chart(graph_info['figure'], width='stretch')
                     
-                    if country_has_tasks:
-                        st.markdown(f"**{c}**")
+                    # Create expandable widget with table data
+                    with st.expander(f"📊 View data table: {graph_info['title']}"):
+                        data = graph_info['data']
                         
+                        # Create DataFrame for the table
+                        df = pd.DataFrame({
+                            'Label': data['labels'],
+                            'Total Effort (hours)': [f"{v:.1f}" for v in data['values']],
+                            'Max Capacity (hours)': [f"{m:.1f}" for m in data['max_capacity']],
+                            'Within Capacity (hours)': [f"{w:.1f}" for w in data['within_capacity']],
+                            'Overload (hours)': [f"{o:.1f}" for o in data['over_capacity']]
+                        })
+                        
+                        # Display the table
+                        st.dataframe(df, width='stretch', hide_index=True)
+        
+            st.header("2. Active Tasks")
+            
+            # Show filter info
+            filter_info = []
+            if len(selected_ranges) < len(range_options):
+                filter_info.append(f"Week Ranges: {', '.join(selected_ranges) if selected_ranges else 'None'}")
+            if selected_labels and len(selected_labels) < len(label_options):
+                filter_info.append(f"Labels: {', '.join(selected_labels) if selected_labels else 'None'}")
+            if len(selected_countries) < len(all_countries):
+                filter_info.append(f"Countries: {', '.join(selected_countries) if selected_countries else 'None'}")
+            if len(selected_projects) < len(project_options):
+                filter_info.append(f"Projects: {', '.join(selected_projects) if selected_projects else 'None'}")
+            
+            if filter_info:
+                st.info(f"📌 Filters: {' | '.join(filter_info)}")
+            
+            # Check if ranges are selected
+            if not selected_ranges or not activeTasks:
+                st.warning("⚠️ Please select at least one week range from the sidebar filter to view active tasks.")
+            else:
+                # Use selected countries, projects, and labels for filtering
+                countries_to_display = selected_countries if selected_countries else []
+                projects_to_display = selected_projects if selected_projects else []
+                labels_to_display = selected_labels if selected_labels else []
+                
+                # Display active tasks organized by week -> country -> label
+                for i, weeklyTasks in enumerate(activeTasks):
+                    if i < len(filtered_range_titles):
+                        week_title = filtered_range_titles[i]
+                        st.subheader(week_title)
+                    else:
+                        continue
+                    
+                    # If no countries selected, show message
+                    if not countries_to_display:
+                        st.warning("⚠️ Please select at least one country from the sidebar filter.")
+                        continue
+                    
+                    # If no projects selected, show message
+                    if not projects_to_display:
+                        st.warning("⚠️ Please select at least one project from the sidebar filter.")
+                        continue
+                    
+                    # If labels are selected but none match, skip
+                    if labels_to_display:
+                        # Check if any labels in weeklyTasks match selected labels
+                        has_matching_labels = any(label in labels_to_display for label in weeklyTasks.keys())
+                        if not has_matching_labels:
+                            continue
+                    
+                    for c in countries_to_display:
+                        country_has_tasks = False
                         for label, tasks in weeklyTasks.items():
                             # Filter by label if labels are selected
                             if labels_to_display and label not in labels_to_display:
@@ -666,34 +703,328 @@ def main():
                                            if t.country == c 
                                            and (not pd.isna(t.project) and t.project in projects_to_display)]
                             if len(tasksFiltered) > 0:
-                                st.markdown(f"*Label: {label}*")
-                                for t in tasksFiltered:
-                                    if t.is_overdue():
-                                        st.markdown(f":red[🔴 {str(t)}]")
-                                    else:
-                                        st.markdown(f"⚪ {str(t)}")
-        
-        st.header("3. Tasks with Missing Information")
-        
-        incompleteTasks = find_incomplete_tasks(plan.get_all_tasks())
-        
-        if len(incompleteTasks) == 0:
-            st.success("✅ All tasks have complete information!")
-        else:
-            st.warning(f"⚠️ Found {len(incompleteTasks)} tasks with missing information:")
+                                country_has_tasks = True
+                                break
+                        
+                        if country_has_tasks:
+                            st.markdown(f"**{c}**")
+                            
+                            for label, tasks in weeklyTasks.items():
+                                # Filter by label if labels are selected
+                                if labels_to_display and label not in labels_to_display:
+                                    continue
+                                # Filter by both country and project
+                                tasksFiltered = [t for t in tasks 
+                                               if t.country == c 
+                                               and (not pd.isna(t.project) and t.project in projects_to_display)]
+                                if len(tasksFiltered) > 0:
+                                    st.markdown(f"*Label: {label}*")
+                                    for t in tasksFiltered:
+                                        if t.is_overdue():
+                                            st.markdown(f":red[🔴 {str(t)}]")
+                                        else:
+                                            st.markdown(f"⚪ {str(t)}")
             
-            for t in incompleteTasks:
-                missing = []
-                if pd.isna(t.project):
-                    missing.append("project")
-                if pd.isna(t.effort):
-                    missing.append("effort")
-                if pd.isna(t.country):
-                    missing.append("country")
-                if pd.isna(t.label):
-                    missing.append("label")
-                fields = ", ".join(missing)
-                st.markdown(f"- **{t.name}**: Missing [{fields}]")
+            st.header("3. Tasks with Missing Information")
+            
+            incompleteTasks = find_incomplete_tasks(plan.get_all_tasks())
+            
+            if len(incompleteTasks) == 0:
+                st.success("✅ All tasks have complete information!")
+            else:
+                st.warning(f"⚠️ Found {len(incompleteTasks)} tasks with missing information:")
+                
+                for t in incompleteTasks:
+                    missing = []
+                    if pd.isna(t.project):
+                        missing.append("project")
+                    if pd.isna(t.effort):
+                        missing.append("effort")
+                    if pd.isna(t.country):
+                        missing.append("country")
+                    if pd.isna(t.label):
+                        missing.append("label")
+                    fields = ", ".join(missing)
+                    st.markdown(f"- **{t.name}**: Missing [{fields}]")
+        
+        with col_notes:
+            # Add custom CSS to make the notes column scrollable and independent
+            st.markdown("""
+                <style>
+                /* Make the notes column scrollable */
+                div[data-testid="column"]:nth-of-type(2) {
+                    max-height: calc(100vh - 100px);
+                    overflow-y: auto !important;
+                    overflow-x: hidden;
+                    position: sticky;
+                    top: 0;
+                }
+                /* Style scrollbar */
+                div[data-testid="column"]:nth-of-type(2)::-webkit-scrollbar {
+                    width: 10px;
+                }
+                div[data-testid="column"]:nth-of-type(2)::-webkit-scrollbar-track {
+                    background: #f1f1f1;
+                    border-radius: 5px;
+                }
+                div[data-testid="column"]:nth-of-type(2)::-webkit-scrollbar-thumb {
+                    background: #888;
+                    border-radius: 5px;
+                }
+                div[data-testid="column"]:nth-of-type(2)::-webkit-scrollbar-thumb:hover {
+                    background: #555;
+                }
+                /* Professional editor styling */
+                .stTextArea textarea {
+                    font-family: 'Courier New', monospace;
+                    font-size: 14px;
+                    line-height: 1.6;
+                }
+                /* Better button styling in toolbar */
+                div[data-testid="column"]:nth-of-type(2) button {
+                    font-size: 12px;
+                    padding: 0.25rem 0.5rem;
+                }
+                </style>
+                """, unsafe_allow_html=True)
+            
+            st.header("📝 Meeting Notes")
+            
+            # Initialize session state for notes
+            if 'notes_date' not in st.session_state:
+                st.session_state.notes_date = analysis_date
+            
+            # Date selector for notes
+            notes_date = st.date_input(
+                "Select Date for Notes",
+                value=st.session_state.notes_date,
+                key="notes_date_selector",
+                help="Select the date for the meeting notes"
+            )
+            
+            # Load current note for selected date
+            current_note = get_note_for_date(datetime.combine(notes_date, datetime.min.time()))
+            
+            # Initialize session state for note text
+            note_key = f"notes_text_{notes_date}"
+            if note_key not in st.session_state:
+                st.session_state[note_key] = current_note
+            
+            # Professional editor header with stats
+            col_header1, col_header2 = st.columns([3, 1])
+            with col_header1:
+                st.markdown("### 📝 Meeting Notes Editor")
+            with col_header2:
+                # Word and character count
+                current_text = st.session_state[note_key]
+                word_count = len(current_text.split()) if current_text else 0
+                char_count = len(current_text) if current_text else 0
+                st.caption(f"📊 {word_count} words | {char_count} chars")
+            
+            # Enhanced formatting toolbar
+            st.markdown("**Formatting Tools:**")
+            col_tool1, col_tool2, col_tool3, col_tool4, col_tool5, col_tool6, col_tool7, col_tool8, col_tool9 = st.columns(9)
+            
+            current_text = st.session_state[note_key]
+            needs_space = current_text and not current_text.endswith('\n') and not current_text.endswith(' ')
+            
+            with col_tool1:
+                if st.button("**B**", help="Bold text", key=f"bold_{notes_date}", width='stretch'):
+                    prefix = " " if needs_space else ""
+                    st.session_state[note_key] = current_text + prefix + "**bold text**"
+                    st.rerun()
+            with col_tool2:
+                if st.button("*I*", help="Italic text", key=f"italic_{notes_date}", width='stretch'):
+                    prefix = " " if needs_space else ""
+                    st.session_state[note_key] = current_text + prefix + "*italic text*"
+                    st.rerun()
+            with col_tool3:
+                if st.button("•", help="Bullet list", key=f"bullet_{notes_date}", width='stretch'):
+                    prefix = "\n" if current_text and not current_text.endswith('\n') else ""
+                    st.session_state[note_key] = current_text + prefix + "- "
+                    st.rerun()
+            with col_tool4:
+                if st.button("1.", help="Numbered list", key=f"numbered_{notes_date}", width='stretch'):
+                    prefix = "\n" if current_text and not current_text.endswith('\n') else ""
+                    st.session_state[note_key] = current_text + prefix + "1. "
+                    st.rerun()
+            with col_tool5:
+                if st.button("#", help="Heading", key=f"heading_{notes_date}", width='stretch'):
+                    prefix = "\n" if current_text and not current_text.endswith('\n') else ""
+                    st.session_state[note_key] = current_text + prefix + "## Heading\n"
+                    st.rerun()
+            with col_tool6:
+                if st.button("`", help="Code", key=f"code_{notes_date}", width='stretch'):
+                    prefix = " " if needs_space else ""
+                    st.session_state[note_key] = current_text + prefix + "`code`"
+                    st.rerun()
+            with col_tool7:
+                if st.button("🔗", help="Link", key=f"link_{notes_date}", width='stretch'):
+                    prefix = " " if needs_space else ""
+                    st.session_state[note_key] = current_text + prefix + "[link text](url)"
+                    st.rerun()
+            with col_tool8:
+                if st.button("---", help="Horizontal rule", key=f"hr_{notes_date}", width='stretch'):
+                    prefix = "\n" if current_text and not current_text.endswith('\n') else ""
+                    st.session_state[note_key] = current_text + prefix + "\n---\n"
+                    st.rerun()
+            with col_tool9:
+                if st.button("📋", help="Insert template", key=f"template_{notes_date}", width='stretch'):
+                    template = "\n\n## Agenda\n- \n- \n\n## Discussion\n\n\n## Action Items\n- [ ] \n- [ ] \n\n## Next Steps\n\n"
+                    prefix = "\n" if current_text and not current_text.endswith('\n') else ""
+                    st.session_state[note_key] = current_text + prefix + template
+                    st.rerun()
+            
+            # Editor/Preview toggle
+            view_mode = st.radio(
+                "View Mode:",
+                ["Editor", "Preview", "Split View"],
+                horizontal=True,
+                key=f"view_mode_{notes_date}",
+                help="Choose how to view your notes"
+            )
+            
+            # Editor and Preview sections
+            if view_mode == "Editor":
+                note_text = st.text_area(
+                    "Editor",
+                    value=st.session_state[note_key],
+                    height=350,
+                    help="Type your notes here. Use markdown formatting.",
+                    key=note_key,
+                    label_visibility="collapsed"
+                )
+                st.session_state[note_key] = note_text
+            elif view_mode == "Preview":
+                st.markdown("**Preview:**")
+                with st.container():
+                    st.markdown("---")
+                    st.markdown(st.session_state[note_key] if st.session_state[note_key] else "*No content*")
+                    st.markdown("---")
+                # Hidden text area to maintain state
+                note_text = st.text_area(
+                    "Editor (hidden)",
+                    value=st.session_state[note_key],
+                    height=1,
+                    key=f"{note_key}_hidden",
+                    label_visibility="collapsed"
+                )
+                st.session_state[note_key] = note_text
+            else:  # Split View
+                col_edit, col_preview = st.columns(2)
+                with col_edit:
+                    st.markdown("**Editor:**")
+                    note_text = st.text_area(
+                        "Editor",
+                        value=st.session_state[note_key],
+                        height=350,
+                        help="Type your notes here",
+                        key=note_key,
+                        label_visibility="collapsed"
+                    )
+                    st.session_state[note_key] = note_text
+                with col_preview:
+                    st.markdown("**Preview:**")
+                    with st.container():
+                        st.markdown("---")
+                        st.markdown(st.session_state[note_key] if st.session_state[note_key] else "*No content*")
+                        st.markdown("---")
+            
+            # Action buttons
+            col_save, col_delete, col_clear = st.columns(3)
+            with col_save:
+                if st.button("💾 Save Notes", width='stretch', type="primary"):
+                    save_note_for_date(datetime.combine(notes_date, datetime.min.time()), st.session_state[note_key])
+                    st.success(f"✅ Notes saved for {notes_date.strftime('%Y-%m-%d')}")
+                    st.rerun()
+            with col_delete:
+                if current_note and st.button("🗑️ Delete", width='stretch'):
+                    delete_note_for_date(datetime.combine(notes_date, datetime.min.time()))
+                    st.session_state[note_key] = ""
+                    st.success(f"✅ Notes deleted for {notes_date.strftime('%Y-%m-%d')}")
+                    st.rerun()
+            with col_clear:
+                if st.button("🗑️ Clear Editor", width='stretch'):
+                    st.session_state[note_key] = ""
+                    st.rerun()
+            
+            # Help section
+            with st.expander("ℹ️ Markdown Help"):
+                st.markdown("""
+                **Quick Reference:**
+                - **Bold**: `**text**`
+                - *Italic*: `*text*`
+                - Heading: `## Heading`
+                - Bullet: `- item`
+                - Numbered: `1. item`
+                - Code: `` `code` ``
+                - Link: `[text](url)`
+                - Checkbox: `- [ ] task`
+                - Horizontal rule: `---`
+                """)
+            
+            st.divider()
+            
+            # View old notes section
+            st.subheader("📚 Previous Notes Archive")
+            
+            all_notes = get_all_notes()
+            if all_notes:
+                # Show list of dates with notes
+                dates_with_notes = list(all_notes.keys())
+                
+                if dates_with_notes:
+                    # Enhanced date selector with count
+                    col_date1, col_date2 = st.columns([3, 1])
+                    with col_date1:
+                        selected_date_str = st.selectbox(
+                            "Select date to view:",
+                            options=dates_with_notes,
+                            help="Select a date to view its notes",
+                            key="view_notes_date"
+                        )
+                    with col_date2:
+                        st.caption(f"📅 {len(dates_with_notes)} notes")
+                    
+                    if selected_date_str:
+                        selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+                        note_content = all_notes[selected_date_str]
+                        
+                        # Professional note display
+                        st.markdown(f"### 📅 {selected_date_str}")
+                        
+                        # Stats for the note
+                        word_count = len(note_content.split()) if note_content else 0
+                        char_count = len(note_content) if note_content else 0
+                        st.caption(f"📊 {word_count} words | {char_count} characters")
+                        
+                        # Display as markdown with better styling
+                        with st.container():
+                            st.markdown("---")
+                            if note_content:
+                                st.markdown(note_content)
+                            else:
+                                st.info("*No content*")
+                            st.markdown("---")
+                        
+                        # Action buttons
+                        col_edit_old, col_delete_old = st.columns(2)
+                        with col_edit_old:
+                            if st.button(f"📝 Edit This Note", width='stretch', key=f"edit_{selected_date_str}"):
+                                st.session_state.notes_date = selected_date
+                                # Update the current note key
+                                note_key = f"notes_text_{selected_date}"
+                                st.session_state[note_key] = note_content
+                                st.rerun()
+                        with col_delete_old:
+                            if st.button(f"🗑️ Delete This Note", width='stretch', key=f"delete_{selected_date_str}"):
+                                delete_note_for_date(datetime.combine(selected_date, datetime.min.time()))
+                                st.success(f"✅ Note deleted for {selected_date_str}")
+                                st.rerun()
+                else:
+                    st.info("No notes found.")
+            else:
+                st.info("No meeting notes saved yet. Start by creating a note above!")
     
     with tab2:
         st.header("⚙️ Max Capacity Settings")
