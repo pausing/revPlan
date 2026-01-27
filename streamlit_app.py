@@ -181,8 +181,9 @@ def plot_effort_graphs(plan, rangesDates, label_filter=None):
                 )
             )
         
-        # Add max capacity as horizontal reference lines
+        # Add max capacity as horizontal reference lines with labels
         shapes = []
+        annotations = []
         for i, max_cap in enumerate(max_capacity):
             shapes.append(
                 dict(
@@ -193,6 +194,25 @@ def plot_effort_graphs(plan, rangesDates, label_filter=None):
                     y0=max_cap, y1=max_cap,
                     line=dict(color=colors['max_effort'], width=2, dash="dash"),
                     layer="below"
+                )
+            )
+            # Add annotation for max effort value
+            annotations.append(
+                dict(
+                    x=i,
+                    y=max_cap,
+                    text=f"{max_cap:.0f}",
+                    showarrow=False,
+                    xref="x",
+                    yref="y",
+                    xanchor="center",
+                    yanchor="bottom",
+                    yshift=8,
+                    font=dict(size=10, color='#2C3E50', family='Arial, sans-serif'),
+                    bgcolor="rgba(255, 255, 255, 0.9)",
+                    bordercolor='#7F8C8D',
+                    borderwidth=1.5,
+                    borderpad=4
                 )
             )
         
@@ -225,6 +245,7 @@ def plot_effort_graphs(plan, rangesDates, label_filter=None):
             hovermode='x unified',
             barmode='stack',  # Stack mode for proper stacking of within_capacity + overload
             shapes=shapes,  # Add max capacity reference lines
+            annotations=annotations,  # Add max effort value labels
             margin=dict(l=50, r=50, t=100, b=80),
             legend=dict(
                 orientation='h',
@@ -430,6 +451,9 @@ def main():
             help="Select a file from the 00_Data folder"
         )
         
+        # Store selected file in session state for PDF export
+        st.session_state.selected_excel_file = selected_file
+        
         if selected_file:
             excel_file = os.path.join(data_folder, selected_file)
             
@@ -580,6 +604,9 @@ def main():
                     use_filters = (export_mode == "Maintain Current Filters")
                     
                     # Generate PDF - pass required functions as parameters
+                    # Get the Excel filename from session state or plan name
+                    excel_filename = st.session_state.get('selected_excel_file', plan.name if plan else "Unknown")
+                    
                     pdf_bytes = generate_pdf_report(
                         plan=plan,
                         all_ranges=all_ranges,
@@ -592,7 +619,8 @@ def main():
                         selected_countries=selected_countries if use_filters else None,
                         selected_projects=selected_projects if use_filters else None,
                         analysis_date=analysis_date,
-                        max_capacity_values=st.session_state.max_capacity_values if 'max_capacity_values' in st.session_state else None
+                        max_capacity_values=st.session_state.max_capacity_values if 'max_capacity_values' in st.session_state else None,
+                        excel_filename=excel_filename
                     )
                     
                     # Create download button
@@ -807,7 +835,17 @@ def main():
             
             # Initialize session state for note text
             note_key = f"notes_text_{notes_date}"
-            if note_key not in st.session_state:
+            
+            # Track the last date to detect changes
+            last_notes_date_key = "last_notes_date"
+            if last_notes_date_key not in st.session_state:
+                st.session_state[last_notes_date_key] = notes_date
+            
+            # If date changed, update the session state
+            if st.session_state[last_notes_date_key] != notes_date:
+                st.session_state[note_key] = current_note
+                st.session_state[last_notes_date_key] = notes_date
+            elif note_key not in st.session_state:
                 st.session_state[note_key] = current_note
             
             # Professional editor header with stats
@@ -894,7 +932,7 @@ def main():
                     key=note_key,
                     label_visibility="collapsed"
                 )
-                st.session_state[note_key] = note_text
+                # Widget automatically updates session state, no need to set it manually
             elif view_mode == "Preview":
                 st.markdown("**Preview:**")
                 with st.container():
@@ -909,7 +947,9 @@ def main():
                     key=f"{note_key}_hidden",
                     label_visibility="collapsed"
                 )
-                st.session_state[note_key] = note_text
+                # Update session state from hidden widget
+                if f"{note_key}_hidden" in st.session_state:
+                    st.session_state[note_key] = st.session_state[f"{note_key}_hidden"]
             else:  # Split View
                 col_edit, col_preview = st.columns(2)
                 with col_edit:
@@ -922,7 +962,7 @@ def main():
                         key=note_key,
                         label_visibility="collapsed"
                     )
-                    st.session_state[note_key] = note_text
+                    # Widget automatically updates session state, no need to set it manually
                 with col_preview:
                     st.markdown("**Preview:**")
                     with st.container():
@@ -1067,6 +1107,53 @@ def main():
                         st.warning(f"⚠️ Label '{new_label.strip()}' already exists. Edit it in the form below.")
                 else:
                     st.error("❌ Please enter a label name.")
+        
+        # Delete label section
+        with st.expander("🗑️ Delete Label", expanded=False):
+            # Get all labels that appear in the form (same as all_labels)
+            deletable_labels = all_labels.copy() if all_labels else []
+            
+            if deletable_labels:
+                st.markdown("**Select a label to delete:**")
+                label_to_delete = st.selectbox(
+                    "Label to delete:",
+                    options=deletable_labels,
+                    help="Select a label to delete from the capacity settings. The label will be removed from your custom configuration.",
+                    key="delete_label_select"
+                )
+                
+                col_del1, col_del2 = st.columns([2, 1])
+                with col_del1:
+                    if label_to_delete:
+                        # Get the current value (from current_values or default_values)
+                        capacity_value = current_values.get(label_to_delete, default_values.get(label_to_delete, 0))
+                        is_default = label_to_delete in default_values
+                        is_custom = label_to_delete in current_values
+                        is_in_plan = label_to_delete in all_labels_in_plan
+                        
+                        # Build info message
+                        label_type = []
+                        if is_default:
+                            label_type.append("default")
+                        if is_custom:
+                            label_type.append("custom")
+                        if is_in_plan:
+                            label_type.append("in plan")
+                        
+                        type_note = f" (Type: {', '.join(label_type)})" if label_type else ""
+                        st.info(f"⚠️ This will remove the label '{label_to_delete}' from your custom configuration (current value: {capacity_value} hours/day).{type_note}")
+                with col_del2:
+                    if st.button("🗑️ Delete Label", key="delete_label_btn", type="primary"):
+                        # Remove from custom configuration if it exists
+                        if label_to_delete in st.session_state.max_capacity_values:
+                            del st.session_state.max_capacity_values[label_to_delete]
+                            st.success(f"✅ Label '{label_to_delete}' removed from custom configuration!")
+                        else:
+                            # Label wasn't in custom config, so it's using default or will be 0
+                            st.info(f"ℹ️ Label '{label_to_delete}' is not in your custom configuration. It will use default value if available.")
+                        st.rerun()
+            else:
+                st.info("No labels found to delete. Load a plan to see labels, or add new labels above.")
         
         # Create a form for editing values
         with st.form("max_capacity_form"):
