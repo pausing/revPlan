@@ -97,7 +97,7 @@ def generate_pdf_report(plan, all_ranges, plot_effort_graphs_func, get_active_ta
                         analysis_date=None, max_capacity_values=None):
     """
     Generate a PDF report with graphs and task lists organized by country, tech block (label), and week.
-    
+
     Args:
         plan: Plan object
         all_ranges: Dictionary of all date ranges
@@ -482,7 +482,7 @@ def generate_pdf_report(plan, all_ranges, plot_effort_graphs_func, get_active_ta
             "No max capacity values configured. Using default values from the system.",
             styles['Normal']
         ))
-    
+    """
     # Build PDF
     doc.build(elements)
     

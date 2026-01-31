@@ -181,8 +181,9 @@ def plot_effort_graphs(plan, rangesDates, label_filter=None):
                 )
             )
         
-        # Add max capacity as horizontal reference lines
+        # Add max capacity as horizontal reference lines with labels
         shapes = []
+        annotations = []
         for i, max_cap in enumerate(max_capacity):
             shapes.append(
                 dict(
@@ -193,6 +194,25 @@ def plot_effort_graphs(plan, rangesDates, label_filter=None):
                     y0=max_cap, y1=max_cap,
                     line=dict(color=colors['max_effort'], width=2, dash="dash"),
                     layer="below"
+                )
+            )
+            # Add annotation for max effort value
+            annotations.append(
+                dict(
+                    x=i,
+                    y=max_cap,
+                    text=f"{max_cap:.0f}",
+                    showarrow=False,
+                    xref="x",
+                    yref="y",
+                    xanchor="center",
+                    yanchor="bottom",
+                    yshift=8,
+                    font=dict(size=10, color='#2C3E50', family='Arial, sans-serif'),
+                    bgcolor="rgba(255, 255, 255, 0.9)",
+                    bordercolor='#7F8C8D',
+                    borderwidth=1.5,
+                    borderpad=4
                 )
             )
         
@@ -225,6 +245,7 @@ def plot_effort_graphs(plan, rangesDates, label_filter=None):
             hovermode='x unified',
             barmode='stack',  # Stack mode for proper stacking of within_capacity + overload
             shapes=shapes,  # Add max capacity reference lines
+            annotations=annotations,  # Add max effort value labels
             margin=dict(l=50, r=50, t=100, b=80),
             legend=dict(
                 orientation='h',
@@ -430,6 +451,9 @@ def main():
             help="Select a file from the 00_Data folder"
         )
         
+        # Store selected file in session state for PDF export
+        st.session_state.selected_excel_file = selected_file
+        
         if selected_file:
             excel_file = os.path.join(data_folder, selected_file)
             
@@ -580,6 +604,9 @@ def main():
                     use_filters = (export_mode == "Maintain Current Filters")
                     
                     # Generate PDF - pass required functions as parameters
+                    # Get the Excel filename from session state or plan name
+                    excel_filename = st.session_state.get('selected_excel_file', plan.name if plan else "Unknown")
+                    
                     pdf_bytes = generate_pdf_report(
                         plan=plan,
                         all_ranges=all_ranges,
@@ -592,7 +619,8 @@ def main():
                         selected_countries=selected_countries if use_filters else None,
                         selected_projects=selected_projects if use_filters else None,
                         analysis_date=analysis_date,
-                        max_capacity_values=st.session_state.max_capacity_values if 'max_capacity_values' in st.session_state else None
+                        max_capacity_values=st.session_state.max_capacity_values if 'max_capacity_values' in st.session_state else None,
+                        excel_filename=excel_filename
                     )
                     
                     # Create download button
@@ -748,7 +776,7 @@ def main():
                     st.markdown(f"- **{t.name}**: Missing [{fields}]")
         
         with col_notes:
-            # Add custom CSS to make the notes column scrollable and independent
+            # Add custom CSS to make the notes column scrollable
             st.markdown("""
                 <style>
                 /* Make the notes column scrollable */
@@ -774,17 +802,6 @@ def main():
                 div[data-testid="column"]:nth-of-type(2)::-webkit-scrollbar-thumb:hover {
                     background: #555;
                 }
-                /* Professional editor styling */
-                .stTextArea textarea {
-                    font-family: 'Courier New', monospace;
-                    font-size: 14px;
-                    line-height: 1.6;
-                }
-                /* Better button styling in toolbar */
-                div[data-testid="column"]:nth-of-type(2) button {
-                    font-size: 12px;
-                    padding: 0.25rem 0.5rem;
-                }
                 </style>
                 """, unsafe_allow_html=True)
             
@@ -796,10 +813,9 @@ def main():
             
             # Date selector for notes
             notes_date = st.date_input(
-                "Select Date for Notes",
+                "Date",
                 value=st.session_state.notes_date,
-                key="notes_date_selector",
-                help="Select the date for the meeting notes"
+                key="notes_date_selector"
             )
             
             # Load current note for selected date
@@ -807,224 +823,139 @@ def main():
             
             # Initialize session state for note text
             note_key = f"notes_text_{notes_date}"
-            if note_key not in st.session_state:
+            
+            # Track the last date to detect changes
+            last_notes_date_key = "last_notes_date"
+            if last_notes_date_key not in st.session_state:
+                st.session_state[last_notes_date_key] = notes_date
+            
+            # If date changed, update the session state
+            if st.session_state[last_notes_date_key] != notes_date:
+                st.session_state[note_key] = current_note
+                st.session_state[last_notes_date_key] = notes_date
+            elif note_key not in st.session_state:
                 st.session_state[note_key] = current_note
             
-            # Professional editor header with stats
-            col_header1, col_header2 = st.columns([3, 1])
-            with col_header1:
-                st.markdown("### 📝 Meeting Notes Editor")
-            with col_header2:
-                # Word and character count
-                current_text = st.session_state[note_key]
-                word_count = len(current_text.split()) if current_text else 0
-                char_count = len(current_text) if current_text else 0
-                st.caption(f"📊 {word_count} words | {char_count} chars")
-            
-            # Enhanced formatting toolbar
-            st.markdown("**Formatting Tools:**")
-            col_tool1, col_tool2, col_tool3, col_tool4, col_tool5, col_tool6, col_tool7, col_tool8, col_tool9 = st.columns(9)
-            
-            current_text = st.session_state[note_key]
-            needs_space = current_text and not current_text.endswith('\n') and not current_text.endswith(' ')
-            
-            with col_tool1:
-                if st.button("**B**", help="Bold text", key=f"bold_{notes_date}", width='stretch'):
-                    prefix = " " if needs_space else ""
-                    st.session_state[note_key] = current_text + prefix + "**bold text**"
-                    st.rerun()
-            with col_tool2:
-                if st.button("*I*", help="Italic text", key=f"italic_{notes_date}", width='stretch'):
-                    prefix = " " if needs_space else ""
-                    st.session_state[note_key] = current_text + prefix + "*italic text*"
-                    st.rerun()
-            with col_tool3:
-                if st.button("•", help="Bullet list", key=f"bullet_{notes_date}", width='stretch'):
-                    prefix = "\n" if current_text and not current_text.endswith('\n') else ""
-                    st.session_state[note_key] = current_text + prefix + "- "
-                    st.rerun()
-            with col_tool4:
-                if st.button("1.", help="Numbered list", key=f"numbered_{notes_date}", width='stretch'):
-                    prefix = "\n" if current_text and not current_text.endswith('\n') else ""
-                    st.session_state[note_key] = current_text + prefix + "1. "
-                    st.rerun()
-            with col_tool5:
-                if st.button("#", help="Heading", key=f"heading_{notes_date}", width='stretch'):
-                    prefix = "\n" if current_text and not current_text.endswith('\n') else ""
-                    st.session_state[note_key] = current_text + prefix + "## Heading\n"
-                    st.rerun()
-            with col_tool6:
-                if st.button("`", help="Code", key=f"code_{notes_date}", width='stretch'):
-                    prefix = " " if needs_space else ""
-                    st.session_state[note_key] = current_text + prefix + "`code`"
-                    st.rerun()
-            with col_tool7:
-                if st.button("🔗", help="Link", key=f"link_{notes_date}", width='stretch'):
-                    prefix = " " if needs_space else ""
-                    st.session_state[note_key] = current_text + prefix + "[link text](url)"
-                    st.rerun()
-            with col_tool8:
-                if st.button("---", help="Horizontal rule", key=f"hr_{notes_date}", width='stretch'):
-                    prefix = "\n" if current_text and not current_text.endswith('\n') else ""
-                    st.session_state[note_key] = current_text + prefix + "\n---\n"
-                    st.rerun()
-            with col_tool9:
-                if st.button("📋", help="Insert template", key=f"template_{notes_date}", width='stretch'):
-                    template = "\n\n## Agenda\n- \n- \n\n## Discussion\n\n\n## Action Items\n- [ ] \n- [ ] \n\n## Next Steps\n\n"
-                    prefix = "\n" if current_text and not current_text.endswith('\n') else ""
-                    st.session_state[note_key] = current_text + prefix + template
-                    st.rerun()
-            
-            # Editor/Preview toggle
-            view_mode = st.radio(
-                "View Mode:",
-                ["Editor", "Preview", "Split View"],
-                horizontal=True,
-                key=f"view_mode_{notes_date}",
-                help="Choose how to view your notes"
+            # Simple text area for notes
+            note_text = st.text_area(
+                "Notes",
+                value=st.session_state[note_key],
+                height=300,
+                key=note_key,
+                label_visibility="visible"
             )
             
-            # Editor and Preview sections
-            if view_mode == "Editor":
-                note_text = st.text_area(
-                    "Editor",
-                    value=st.session_state[note_key],
-                    height=350,
-                    help="Type your notes here. Use markdown formatting.",
-                    key=note_key,
-                    label_visibility="collapsed"
-                )
-                st.session_state[note_key] = note_text
-            elif view_mode == "Preview":
-                st.markdown("**Preview:**")
-                with st.container():
-                    st.markdown("---")
-                    st.markdown(st.session_state[note_key] if st.session_state[note_key] else "*No content*")
-                    st.markdown("---")
-                # Hidden text area to maintain state
-                note_text = st.text_area(
-                    "Editor (hidden)",
-                    value=st.session_state[note_key],
-                    height=1,
-                    key=f"{note_key}_hidden",
-                    label_visibility="collapsed"
-                )
-                st.session_state[note_key] = note_text
-            else:  # Split View
-                col_edit, col_preview = st.columns(2)
-                with col_edit:
-                    st.markdown("**Editor:**")
-                    note_text = st.text_area(
-                        "Editor",
-                        value=st.session_state[note_key],
-                        height=350,
-                        help="Type your notes here",
-                        key=note_key,
-                        label_visibility="collapsed"
-                    )
-                    st.session_state[note_key] = note_text
-                with col_preview:
-                    st.markdown("**Preview:**")
-                    with st.container():
-                        st.markdown("---")
-                        st.markdown(st.session_state[note_key] if st.session_state[note_key] else "*No content*")
-                        st.markdown("---")
-            
             # Action buttons
-            col_save, col_delete, col_clear = st.columns(3)
+            col_save, col_update, col_delete = st.columns(3)
             with col_save:
-                if st.button("💾 Save Notes", width='stretch', type="primary"):
+                if st.button("💾 Save", width='stretch', type="primary"):
                     save_note_for_date(datetime.combine(notes_date, datetime.min.time()), st.session_state[note_key])
-                    st.success(f"✅ Notes saved for {notes_date.strftime('%Y-%m-%d')}")
+                    st.success(f"✅ Saved")
                     st.rerun()
+            with col_update:
+                if current_note:
+                    if st.button("🔄 Update", width='stretch'):
+                        save_note_for_date(datetime.combine(notes_date, datetime.min.time()), st.session_state[note_key])
+                        st.success(f"✅ Updated")
+                        st.rerun()
             with col_delete:
-                if current_note and st.button("🗑️ Delete", width='stretch'):
-                    delete_note_for_date(datetime.combine(notes_date, datetime.min.time()))
-                    st.session_state[note_key] = ""
-                    st.success(f"✅ Notes deleted for {notes_date.strftime('%Y-%m-%d')}")
-                    st.rerun()
-            with col_clear:
-                if st.button("🗑️ Clear Editor", width='stretch'):
-                    st.session_state[note_key] = ""
-                    st.rerun()
-            
-            # Help section
-            with st.expander("ℹ️ Markdown Help"):
-                st.markdown("""
-                **Quick Reference:**
-                - **Bold**: `**text**`
-                - *Italic*: `*text*`
-                - Heading: `## Heading`
-                - Bullet: `- item`
-                - Numbered: `1. item`
-                - Code: `` `code` ``
-                - Link: `[text](url)`
-                - Checkbox: `- [ ] task`
-                - Horizontal rule: `---`
-                """)
+                if current_note:
+                    if st.button("🗑️ Delete", width='stretch'):
+                        delete_note_for_date(datetime.combine(notes_date, datetime.min.time()))
+                        st.session_state[note_key] = ""
+                        st.success(f"✅ Deleted")
+                        st.rerun()
             
             st.divider()
             
-            # View old notes section
-            st.subheader("📚 Previous Notes Archive")
+            # View notes section
+            st.subheader("📚 View Notes")
             
             all_notes = get_all_notes()
             if all_notes:
-                # Show list of dates with notes
-                dates_with_notes = list(all_notes.keys())
+                dates_with_notes = sorted(list(all_notes.keys()), reverse=True)
                 
                 if dates_with_notes:
-                    # Enhanced date selector with count
-                    col_date1, col_date2 = st.columns([3, 1])
-                    with col_date1:
+                    # Show last 3 notes by default
+                    recent_dates = dates_with_notes[:3]
+                    
+                    # If there are more than 3 notes, add a selector
+                    if len(dates_with_notes) > 3:
                         selected_date_str = st.selectbox(
                             "Select date to view:",
                             options=dates_with_notes,
-                            help="Select a date to view its notes",
-                            key="view_notes_date"
+                            key="view_notes_date",
+                            help=f"Showing last 3 notes below. Select a specific date to view it here."
                         )
-                    with col_date2:
-                        st.caption(f"📅 {len(dates_with_notes)} notes")
+                        
+                        # Show selected note
+                        if selected_date_str:
+                            selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+                            note_content = all_notes[selected_date_str]
+                            
+                            st.markdown(f"**{selected_date_str}**")
+                            st.text_area(
+                                "Content",
+                                value=note_content if note_content else "",
+                                height=300,
+                                key=f"view_selected_{selected_date_str}",
+                                disabled=True,
+                                label_visibility="visible"
+                            )
+                            
+                            # Edit and Delete buttons
+                            col_edit_sel, col_del_sel = st.columns(2)
+                            with col_edit_sel:
+                                if st.button("📝 Edit", width='stretch', key=f"edit_selected_{selected_date_str}"):
+                                    st.session_state.notes_date = selected_date
+                                    note_key_for_date = f"notes_text_{selected_date}"
+                                    st.session_state[note_key_for_date] = note_content
+                                    st.rerun()
+                            with col_del_sel:
+                                if st.button("🗑️ Delete", width='stretch', key=f"delete_selected_{selected_date_str}"):
+                                    delete_note_for_date(datetime.combine(selected_date, datetime.min.time()))
+                                    st.success(f"✅ Note deleted for {selected_date_str}")
+                                    st.rerun()
+                            
+                            st.divider()
+                            st.markdown("**Last 3 Notes:**")
                     
-                    if selected_date_str:
-                        selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
-                        note_content = all_notes[selected_date_str]
+                    # Show last 3 notes
+                    for idx, date_str in enumerate(recent_dates):
+                        date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+                        note_content = all_notes[date_str]
                         
-                        # Professional note display
-                        st.markdown(f"### 📅 {selected_date_str}")
+                        st.markdown(f"**{date_str}**")
+                        st.text_area(
+                            "Content",
+                            value=note_content if note_content else "",
+                            height=300,  # 1.5x of original 200
+                            key=f"view_{date_str}",
+                            disabled=True,
+                            label_visibility="visible"
+                        )
                         
-                        # Stats for the note
-                        word_count = len(note_content.split()) if note_content else 0
-                        char_count = len(note_content) if note_content else 0
-                        st.caption(f"📊 {word_count} words | {char_count} characters")
-                        
-                        # Display as markdown with better styling
-                        with st.container():
-                            st.markdown("---")
-                            if note_content:
-                                st.markdown(note_content)
-                            else:
-                                st.info("*No content*")
-                            st.markdown("---")
-                        
-                        # Action buttons
-                        col_edit_old, col_delete_old = st.columns(2)
-                        with col_edit_old:
-                            if st.button(f"📝 Edit This Note", width='stretch', key=f"edit_{selected_date_str}"):
-                                st.session_state.notes_date = selected_date
-                                # Update the current note key
-                                note_key = f"notes_text_{selected_date}"
-                                st.session_state[note_key] = note_content
+                        # Edit and Delete buttons
+                        col_edit, col_del = st.columns(2)
+                        with col_edit:
+                            if st.button("📝 Edit", width='stretch', key=f"edit_{date_str}_{idx}"):
+                                st.session_state.notes_date = date_obj
+                                note_key_for_date = f"notes_text_{date_obj}"
+                                st.session_state[note_key_for_date] = note_content
                                 st.rerun()
-                        with col_delete_old:
-                            if st.button(f"🗑️ Delete This Note", width='stretch', key=f"delete_{selected_date_str}"):
-                                delete_note_for_date(datetime.combine(selected_date, datetime.min.time()))
-                                st.success(f"✅ Note deleted for {selected_date_str}")
+                        with col_del:
+                            if st.button("🗑️ Delete", width='stretch', key=f"delete_{date_str}_{idx}"):
+                                delete_note_for_date(datetime.combine(date_obj, datetime.min.time()))
+                                st.success(f"✅ Note deleted for {date_str}")
                                 st.rerun()
+                        
+                        # Add spacing between notes (except for last one)
+                        if idx < len(recent_dates) - 1:
+                            st.divider()
                 else:
                     st.info("No notes found.")
             else:
-                st.info("No meeting notes saved yet. Start by creating a note above!")
+                st.info("No notes saved yet.")
     
     with tab2:
         st.header("⚙️ Max Capacity Settings")
@@ -1067,6 +998,53 @@ def main():
                         st.warning(f"⚠️ Label '{new_label.strip()}' already exists. Edit it in the form below.")
                 else:
                     st.error("❌ Please enter a label name.")
+        
+        # Delete label section
+        with st.expander("🗑️ Delete Label", expanded=False):
+            # Get all labels that appear in the form (same as all_labels)
+            deletable_labels = all_labels.copy() if all_labels else []
+            
+            if deletable_labels:
+                st.markdown("**Select a label to delete:**")
+                label_to_delete = st.selectbox(
+                    "Label to delete:",
+                    options=deletable_labels,
+                    help="Select a label to delete from the capacity settings. The label will be removed from your custom configuration.",
+                    key="delete_label_select"
+                )
+                
+                col_del1, col_del2 = st.columns([2, 1])
+                with col_del1:
+                    if label_to_delete:
+                        # Get the current value (from current_values or default_values)
+                        capacity_value = current_values.get(label_to_delete, default_values.get(label_to_delete, 0))
+                        is_default = label_to_delete in default_values
+                        is_custom = label_to_delete in current_values
+                        is_in_plan = label_to_delete in all_labels_in_plan
+                        
+                        # Build info message
+                        label_type = []
+                        if is_default:
+                            label_type.append("default")
+                        if is_custom:
+                            label_type.append("custom")
+                        if is_in_plan:
+                            label_type.append("in plan")
+                        
+                        type_note = f" (Type: {', '.join(label_type)})" if label_type else ""
+                        st.info(f"⚠️ This will remove the label '{label_to_delete}' from your custom configuration (current value: {capacity_value} hours/day).{type_note}")
+                with col_del2:
+                    if st.button("🗑️ Delete Label", key="delete_label_btn", type="primary"):
+                        # Remove from custom configuration if it exists
+                        if label_to_delete in st.session_state.max_capacity_values:
+                            del st.session_state.max_capacity_values[label_to_delete]
+                            st.success(f"✅ Label '{label_to_delete}' removed from custom configuration!")
+                        else:
+                            # Label wasn't in custom config, so it's using default or will be 0
+                            st.info(f"ℹ️ Label '{label_to_delete}' is not in your custom configuration. It will use default value if available.")
+                        st.rerun()
+            else:
+                st.info("No labels found to delete. Load a plan to see labels, or add new labels above.")
         
         # Create a form for editing values
         with st.form("max_capacity_form"):
