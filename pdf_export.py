@@ -94,7 +94,7 @@ def generate_pdf_report(plan, all_ranges, plot_effort_graphs_func, get_active_ta
                         max_effort_func, use_filters=True, 
                         selected_ranges=None, selected_labels=None, 
                         selected_countries=None, selected_projects=None,
-                        analysis_date=None, max_capacity_values=None):
+                        analysis_date=None, max_capacity_values=None, excel_filename=None):
     """
     Generate a PDF report with graphs and task lists organized by country, tech block (label), and week.
 
@@ -111,6 +111,7 @@ def generate_pdf_report(plan, all_ranges, plot_effort_graphs_func, get_active_ta
         selected_projects: List of selected projects (if use_filters=True)
         analysis_date: Analysis date for the report
         max_capacity_values: Dictionary of max capacity values per label (hours/day)
+        excel_filename: Optional name of the source Excel file (e.g. for "Data Source" in the report)
     """
     # Create a BytesIO buffer for the PDF
     buffer = io.BytesIO()
@@ -164,8 +165,13 @@ def generate_pdf_report(plan, all_ranges, plot_effort_graphs_func, get_active_ta
     
     # Title
     title_text = f"Engineering Plan Review - 3 Week Report"
+    info_parts = []
+    if excel_filename:
+        info_parts.append(f"Data Source: {excel_filename}")
     if analysis_date:
-        title_text += f"<br/><font size=12>Analysis Date: {analysis_date.strftime('%Y-%m-%d')}</font>"
+        info_parts.append(f"Analysis Date: {analysis_date.strftime('%Y-%m-%d')}")
+    if info_parts:
+        title_text += f"<br/><font size=12>{' | '.join(info_parts)}</font>"
     elements.append(Paragraph(title_text, title_style))
     elements.append(Spacer(1, 0.2*inch))
     
@@ -482,7 +488,7 @@ def generate_pdf_report(plan, all_ranges, plot_effort_graphs_func, get_active_ta
             "No max capacity values configured. Using default values from the system.",
             styles['Normal']
         ))
-    """
+
     # Build PDF
     doc.build(elements)
     
